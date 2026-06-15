@@ -8,6 +8,7 @@ import {
   MoodResponse,
   fetchInsights,
   fetchMood,
+  fetchWatchlist,
   BinanceOrder,
   BinanceTrade,
   Balance,
@@ -22,6 +23,8 @@ import {
 import { useBinanceLive } from "@/hooks/useBinanceLive";
 import MoodBar from "@/components/MoodBar";
 import CoinCard, { CoinCardSkeleton } from "@/components/CoinCard";
+import WatchlistSidebar from "@/components/WatchlistSidebar";
+import DailyDigest from "@/components/DailyDigest";
 import ChartPanel from "@/components/ChartPanel";
 import ChatPanel from "@/components/ChatPanel";
 import AppHeader from "@/components/AppHeader";
@@ -29,10 +32,18 @@ import SettingsModal from "@/components/SettingsModal";
 import MarketTicker from "@/components/MarketTicker";
 import OrdersPanel from "@/components/OrdersPanel";
 
+const WATCHLIST_BREAKPOINT = 1024; // below this = mobile → panel floats + auto-collapses
+const WATCHLIST_OPEN_KEY = "cryptolens_watchlist_open";
+
 function Dashboard() {
   const searchParams = useSearchParams();
   const currentTab = searchParams.get("tab") === "orders" ? "orders" : "trade";
   const [mood, setMood] = useState<MoodResponse | null>(null);
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  // Default closed for SSR/first paint (avoids hydration mismatch); the effect
+  // below resolves the real state from saved preference + viewport width.
+  const [watchlistOpen, setWatchlistOpen] = useState(false);
+  const [watchlistMobile, setWatchlistMobile] = useState(false);
   const [backendInsights, setBackendInsights] = useState<InsightsResponse | null>(null);
   const [moodLoading, setMoodLoading] = useState(true);
   const [aiLoading, setAiLoading] = useState(true);
@@ -51,7 +62,41 @@ function Dashboard() {
   const [backendConfig, setBackendConfig] = useState<{ is_mainnet: boolean; base_url: string } | null>(null);
 
   const backendCoins = backendInsights?.coins ?? null;
-  const { coins: liveCoins, ready: marketReady, lastTick, reloadMarket } = useBinanceLive(backendCoins);
+  const { coins: liveCoins, ready: marketReady, lastTick, reloadMarket } = useBinanceLive(backendCoins, watchlist);
+  const watchlistKey = watchlist.join(",");
+
+  // Resolve watchlist panel state from saved preference + viewport, and keep it
+  // in sync on resize: mobile widths auto-collapse (and float), desktop restores
+  // the user's saved choice.
+  useEffect(() => {
+    const apply = () => {
+      const mobile = window.innerWidth < WATCHLIST_BREAKPOINT;
+      setWatchlistMobile(mobile);
+      if (mobile) {
+        setWatchlistOpen(false);
+      } else {
+        const saved = localStorage.getItem(WATCHLIST_OPEN_KEY);
+        setWatchlistOpen(saved != null ? saved === "1" : true);
+      }
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, []);
+
+  const toggleWatchlist = useCallback(() => {
+    setWatchlistOpen((o) => {
+      const next = !o;
+      // Persist intent only on desktop — a mobile open is a transient overlay.
+      if (window.innerWidth >= WATCHLIST_BREAKPOINT) {
+        localStorage.setItem(WATCHLIST_OPEN_KEY, next ? "1" : "0");
+      }
+      return next;
+    });
+  }, []);
+
+  // Content docks (reserves space) only when the panel is open AND docked.
+  const watchlistDocked = watchlistOpen && !watchlistMobile;
 
   // Load Google User from localStorage on mount & sync auth changes
   useEffect(() => {
@@ -153,14 +198,39 @@ function Dashboard() {
   const load = useCallback(async () => {
     setMoodLoading(true);
     setAiLoading(true);
-    const [ins, m] = await Promise.allSettled([fetchInsights(), fetchMood(), loadKeyAndConfigStatus()]);
+    // Resolve the user's watchlist first — insights + live market follow it.
+    let symbols = watchlist;
+    try {
+      symbols = await fetchWatchlist();
+      setWatchlist(symbols);
+    } catch {
+      /* fall back to whatever we already have (or hook defaults) */
+    }
+    const symbolParam = symbols.length ? symbols.join(",") : undefined;
+    const [ins, m] = await Promise.allSettled([
+      symbolParam ? fetchInsights(symbolParam) : fetchInsights(),
+      fetchMood(),
+      loadKeyAndConfigStatus(),
+    ]);
     if (ins.status === "fulfilled") setBackendInsights(ins.value);
     if (m.status === "fulfilled") setMood(m.value);
-    await reloadMarket();
     await loadOrders();
     setMoodLoading(false);
     setAiLoading(false);
-  }, [reloadMarket, loadKeyAndConfigStatus, loadOrders]);
+    // watchlist intentionally omitted: load re-reads it from the server each call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadKeyAndConfigStatus, loadOrders]);
+
+  // Re-sync insights to the watchlist whenever the user edits it (separate from
+  // the full `load` so add/remove feels instant without re-pulling everything).
+  const handleWatchlistChange = useCallback((next: string[]) => {
+    setWatchlist(next);
+    setAiLoading(true);
+    fetchInsights(next.join(","))
+      .then(setBackendInsights)
+      .catch(() => {})
+      .finally(() => setAiLoading(false));
+  }, []);
 
   useEffect(() => {
     load();
@@ -202,7 +272,10 @@ function Dashboard() {
   );
 
   return (
-    <div className="flex flex-col min-h-screen">
+    <div
+      className="flex flex-col min-h-screen transition-[padding] duration-300"
+      style={{ paddingRight: watchlistDocked ? 300 : 0 }}
+    >
       <AppHeader
         activeNav={currentTab === "orders" ? "orders" : "trading"}
         marketReady={marketReady}
@@ -219,6 +292,44 @@ function Dashboard() {
       <main className="flex-1 p-4 sm:p-6 max-w-[1680px] mx-auto w-full flex flex-col gap-5">
         {currentTab === "trade" ? (
           <>
+            {/* Insight-first: today's digest up top; watchlist lives in the side panel */}
+            <DailyDigest watchlistKey={watchlistKey} />
+
+            {/* Markets overview — pick a coin, chart updates below */}
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-xs uppercase tracking-wider text-zinc-500">
+                  ตลาด · เลือกเหรียญเพื่อเปลี่ยนกระดาน
+                </h2>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {loading
+                  ? Array.from({ length: 4 }).map((_, i) => <CoinCardSkeleton key={i} />)
+                  : liveCoins.map((coin) => (
+                      <CoinCard
+                        key={coin.symbol}
+                        coin={coin}
+                        stale={backendInsights?.stale ?? false}
+                        selected={chartCoin?.symbol === coin.symbol}
+                        onSelect={handleSelectCoin}
+                        onAsk={setActiveCoin}
+                      />
+                    ))}
+              </div>
+
+              {!loading && liveCoins.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-24 text-zinc-500">
+                  <p className="text-sm">ไม่สามารถโหลดข้อมูลได้</p>
+                  <button
+                    onClick={load}
+                    className="mt-4 text-xs border border-zinc-700 px-4 py-2 rounded-lg hover:border-zinc-500 transition-colors"
+                  >
+                    ลองใหม่
+                  </button>
+                </div>
+              )}
+            </section>
+
             {chartCoin ? (
               <>
                 <MarketTicker coin={chartCoin} allCoins={liveCoins} onSelectCoin={handleSelectCoin} />
@@ -253,40 +364,6 @@ function Dashboard() {
               </div>
             )}
 
-            {/* Markets overview */}
-            <section>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-xs uppercase tracking-wider text-zinc-500">
-                  ตลาด · เลือกเหรียญเพื่อเปลี่ยนกระดาน
-                </h2>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {loading
-                  ? Array.from({ length: 4 }).map((_, i) => <CoinCardSkeleton key={i} />)
-                  : liveCoins.map((coin) => (
-                      <CoinCard
-                        key={coin.symbol}
-                        coin={coin}
-                        stale={backendInsights?.stale ?? false}
-                        selected={chartCoin?.symbol === coin.symbol}
-                        onSelect={handleSelectCoin}
-                        onAsk={setActiveCoin}
-                      />
-                    ))}
-              </div>
-
-              {!loading && liveCoins.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-24 text-zinc-500">
-                  <p className="text-sm">ไม่สามารถโหลดข้อมูลได้</p>
-                  <button
-                    onClick={load}
-                    className="mt-4 text-xs border border-zinc-700 px-4 py-2 rounded-lg hover:border-zinc-500 transition-colors"
-                  >
-                    ลองใหม่
-                  </button>
-                </div>
-              )}
-            </section>
           </>
         ) : (
           <OrdersPanel
@@ -313,7 +390,8 @@ function Dashboard() {
             const coinToAsk = chartCoin || liveCoins[0];
             if (coinToAsk) setActiveCoin(coinToAsk);
           }}
-          className="fixed bottom-6 right-6 z-40 flex items-center gap-2.5 bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs px-4.5 py-3.5 rounded-full shadow-lg shadow-violet-950/50 hover:shadow-violet-600/30 transition-all hover:scale-105 active:scale-95 duration-200 border border-violet-500/20 cursor-pointer"
+          style={{ right: watchlistDocked ? 324 : 24 }}
+          className="fixed bottom-6 z-40 flex items-center gap-2.5 bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs px-4.5 py-3.5 rounded-full shadow-lg shadow-violet-950/50 hover:shadow-violet-600/30 transition-all hover:scale-105 active:scale-95 duration-200 border border-violet-500/20 cursor-pointer"
         >
           <svg className="w-4.5 h-4.5 text-violet-100" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3 15l5.096-.813L9 9l.813 5.096L15 15l-5.187.904zM18 5.25L17.25 7.5L15 8.25l2.25.75L18 11.25l.75-2.25L21 8.25l-2.25-.75L18 5.25z" />
@@ -331,6 +409,19 @@ function Dashboard() {
         googleUser={googleUser}
         setGoogleUser={setGoogleUser}
         onKeysChanged={load}
+      />
+
+      {/* TradingView-style docked watchlist */}
+      <WatchlistSidebar
+        open={watchlistOpen}
+        onToggle={toggleWatchlist}
+        symbols={watchlist}
+        coins={liveCoins}
+        selectedSymbol={chartCoin?.symbol}
+        onSelect={handleSelectCoin}
+        onChange={handleWatchlistChange}
+        max={10}
+        overlay={watchlistMobile}
       />
     </div>
   );

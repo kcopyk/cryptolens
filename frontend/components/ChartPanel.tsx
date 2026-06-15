@@ -4,7 +4,9 @@ import { useState } from "react";
 import { Coin, ChartInterval, CHART_INTERVALS, formatNumber, MockOrder } from "@/lib/api";
 import { useBinanceChart } from "@/hooks/useBinanceChart";
 import { snapshotFromCandles } from "@/lib/indicators";
-import CandlestickChart, { MacdMiniChart, RsiMiniChart } from "./CandlestickChart";
+import { MacdMiniChart, RsiMiniChart } from "./CandlestickChart";
+import KLineChartPanel from "./KLineChartPanel";
+import TradeOnBinanceButton from "./TradeOnBinanceButton";
 import { IndicatorBar, NewsList } from "./IndicatorNews";
 import OrderPanel from "./OrderPanel";
 import OrderBook from "./OrderBook";
@@ -65,6 +67,7 @@ export default function ChartPanel({
                   </button>
                 ))}
               </div>
+              <TradeOnBinanceButton symbol={coin.symbol} />
               <button
                 onClick={() => onAsk(coin)}
                 className="text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white px-3 py-1.5 rounded-lg transition-colors"
@@ -93,8 +96,8 @@ export default function ChartPanel({
             )}
             {showChart && (
               <div className={loading ? "opacity-60" : ""}>
-                <CandlestickChart
-                  key={`${coin.symbol}-${interval}`}
+                <KLineChartPanel
+                  symbol={coin.symbol}
                   candles={candles}
                   interval={interval}
                   height={420}
@@ -124,13 +127,19 @@ export default function ChartPanel({
           </div>
         </div>
 
-        {/* Order book + recent trades column */}
-        <div className="xl:col-span-3 bg-zinc-900/50 border border-zinc-800 rounded-2xl flex flex-col divide-y divide-zinc-800 min-h-[560px]">
+        {/* Order book + recent trades column. On xl its height is bounded to the
+            chart column (min-h-0 + overflow-hidden) so the trades list scrolls
+            inside instead of stretching the whole terminal row. */}
+        <div className="xl:col-span-3 bg-zinc-900/50 border border-zinc-800 rounded-2xl flex flex-col divide-y divide-zinc-800 min-h-[560px] xl:min-h-0 xl:overflow-hidden">
           <div className="flex-none">
             <OrderBook symbol={coin.symbol} lastPrice={coin.price} onSelectPrice={pickPrice} />
           </div>
-          <div className="flex-1 min-h-[220px]">
-            <RecentTrades symbol={coin.symbol} onSelectPrice={pickPrice} />
+          {/* On xl the trades list is absolutely filled so it can't expand the
+              column — the column stretches to the chart's height and scrolls. */}
+          <div className="flex-1 min-h-[220px] xl:min-h-0 xl:relative">
+            <div className="xl:absolute xl:inset-0">
+              <RecentTrades symbol={coin.symbol} onSelectPrice={pickPrice} />
+            </div>
           </div>
         </div>
 

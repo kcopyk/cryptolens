@@ -33,12 +33,17 @@ function mergeCoin(
   });
 }
 
-export function useBinanceLive(backendCoins: Coin[] | null) {
+export function useBinanceLive(backendCoins: Coin[] | null, symbols?: string[]) {
   const [coins, setCoins] = useState<Coin[]>([]);
   const [ready, setReady] = useState(false);
   const [lastTick, setLastTick] = useState<number | null>(null);
   const closesRef = useRef<Map<string, number[]>>(new Map());
   const metaRef = useRef<Map<string, Partial<Coin>>>(new Map());
+
+  // Watchlist-driven symbol set (falls back to the default four). Joined into a
+  // stable key so effects re-run only when the actual list changes.
+  const activeSymbols = symbols && symbols.length ? symbols : DEFAULT_SYMBOLS;
+  const symbolsKey = activeSymbols.join(",");
 
   // Sync AI summary + news from backend
   useEffect(() => {
@@ -58,21 +63,27 @@ export function useBinanceLive(backendCoins: Coin[] | null) {
 
   const bootstrap = useCallback(async () => {
     const results = await Promise.all(
-      DEFAULT_SYMBOLS.map(async (sym) => {
-        const [klines, ticker] = await Promise.all([
-          fetchKlines(sym, "1h", 100),
-          fetchTicker24h(sym),
-        ]);
-        const closes = klines.map((k) => k.close);
-        closesRef.current.set(sym, closes);
-        const meta = metaRef.current.get(sym);
-        return mergeCoin(sym, closes, ticker, meta);
+      activeSymbols.map(async (sym) => {
+        try {
+          const [klines, ticker] = await Promise.all([
+            fetchKlines(sym, "1h", 100),
+            fetchTicker24h(sym),
+          ]);
+          const closes = klines.map((k) => k.close);
+          closesRef.current.set(sym, closes);
+          const meta = metaRef.current.get(sym);
+          return mergeCoin(sym, closes, ticker, meta);
+        } catch {
+          // Skip a symbol that fails to load rather than blanking the grid.
+          return null;
+        }
       })
     );
-    setCoins(results);
+    setCoins(results.filter((c): c is Coin => c !== null));
     setReady(true);
     setLastTick(Date.now());
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbolsKey]);
 
   useEffect(() => {
     bootstrap();
@@ -81,7 +92,7 @@ export function useBinanceLive(backendCoins: Coin[] | null) {
   // Live ticker WebSocket
   useEffect(() => {
     if (!ready) return;
-    const unsub = subscribeTickers(DEFAULT_SYMBOLS, (tick) => {
+    const unsub = subscribeTickers(activeSymbols, (tick) => {
       const closes = closesRef.current.get(tick.symbol);
       if (closes?.length) {
         closes[closes.length - 1] = tick.price;
@@ -107,7 +118,8 @@ export function useBinanceLive(backendCoins: Coin[] | null) {
       setLastTick(Date.now());
     });
     return unsub;
-  }, [ready]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, symbolsKey]);
 
   return { coins, ready, lastTick, reloadMarket: bootstrap };
 }

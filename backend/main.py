@@ -12,6 +12,7 @@ import news as news_api
 import ai
 import binance_trade
 import vault
+import db
 
 app = FastAPI(title="CryptoLens")
 
@@ -28,6 +29,10 @@ VALID_CHART_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def today_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 async def fetch_coin(symbol: str) -> dict:
@@ -87,7 +92,7 @@ async def candles(
     limit: int = Query(default=100, ge=10, le=500),
 ):
     sym = symbol.upper()
-    if sym not in bnb.PAIRS:
+    if not sym.isalnum():
         raise HTTPException(status_code=400, detail=f"Unknown symbol: {sym}")
     if interval not in VALID_CHART_INTERVALS:
         raise HTTPException(status_code=400, detail=f"Invalid interval. Use: {', '.join(VALID_CHART_INTERVALS)}")
@@ -121,7 +126,7 @@ async def candles(
 @app.get("/api/news")
 async def news(symbol: str = Query(default="BTC")):
     sym = symbol.upper()
-    if sym not in bnb.PAIRS:
+    if not sym.isalnum():
         raise HTTPException(status_code=400, detail=f"Unknown symbol: {sym}")
 
     cache_key = f"news:{sym}"
@@ -186,6 +191,108 @@ async def ask(body: AskBody):
         return {"answer": answer, "as_of": snapshot.get("as_of", now_iso())}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+# ─── Insight-first Phase 1: watchlist · digest · chart drawings ──────────
+
+def _require_user(x_user_id: Optional[str]) -> str:
+    if not x_user_id:
+        raise HTTPException(status_code=400, detail="Missing user session ID (X-User-ID header).")
+    return x_user_id
+
+
+class WatchlistBody(BaseModel):
+    symbol: str
+
+
+@app.get("/api/watchlist")
+def get_watchlist(x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    return {"symbols": db.get_watchlist(user)}
+
+
+@app.post("/api/watchlist")
+async def add_watchlist(body: WatchlistBody, x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    symbol = body.symbol.strip().upper()
+    if not symbol.isalnum():
+        raise HTTPException(status_code=400, detail=f"Invalid symbol: {symbol}")
+    # Enforce the cap (spec §8 Q2) — but only block genuinely new symbols, so
+    # re-adding an existing one is always idempotent.
+    if symbol not in db.get_watchlist(user) and db.count_watchlist(user) >= db.WATCHLIST_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Watchlist เต็ม (สูงสุด {db.WATCHLIST_MAX} เหรียญ)",
+        )
+    if not await bnb.validate_symbol(symbol):
+        raise HTTPException(status_code=400, detail=f"ไม่พบเหรียญ {symbol} บน Binance (ต้องมีคู่ {symbol}USDT)")
+    db.add_to_watchlist(user, symbol)
+    return {"symbols": db.get_watchlist(user)}
+
+
+@app.delete("/api/watchlist/{symbol}")
+def delete_watchlist(symbol: str, x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    db.remove_from_watchlist(user, symbol)
+    return {"symbols": db.get_watchlist(user)}
+
+
+@app.get("/api/digest")
+async def digest(x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    symbols = db.get_watchlist(user)[: db.WATCHLIST_MAX]
+    day = today_utc()
+
+    cached = db.get_digest_cache(user, day)
+    if cached:
+        return {**cached, "cached": True}
+
+    try:
+        coins = []
+        for s in symbols:
+            snap = cache.get(f"snapshot:{s}") or cache.get_stale(f"snapshot:{s}")
+            if not snap:
+                snap = await fetch_coin(s)
+                cache.set(f"snapshot:{s}", {**snap, "as_of": now_iso()})
+            coins.append(snap)
+
+        result = ai.daily_digest(coins)
+        payload = {
+            "as_of": now_iso(),
+            "day": day,
+            "symbols": symbols,
+            "digest": result,
+            "coins": [
+                {
+                    "symbol": c["symbol"],
+                    "price": c["price"],
+                    "change_24h_pct": c["change_24h_pct"],
+                }
+                for c in coins
+            ],
+        }
+        db.set_digest_cache(user, day, payload)
+        return {**payload, "cached": False}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class ChartDrawingsBody(BaseModel):
+    symbol: str
+    drawings: list[Any] = []
+
+
+@app.get("/api/chart/drawings")
+def get_chart_drawings(symbol: str = Query(...), x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    return {"symbol": symbol.upper(), "drawings": db.get_chart_drawings(user, symbol)}
+
+
+@app.put("/api/chart/drawings")
+def put_chart_drawings(body: ChartDrawingsBody, x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    db.save_chart_drawings(user, body.symbol, body.drawings)
+    return {"status": "success", "symbol": body.symbol.upper(), "count": len(body.drawings)}
 
 
 class OrderBody(BaseModel):

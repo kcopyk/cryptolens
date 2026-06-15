@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Coin, formatPrice, formatVolume, macdTrend } from "@/lib/api";
 import Sparkline from "./Sparkline";
 import { NewsList } from "./IndicatorNews";
+import TradeOnBinanceButton from "./TradeOnBinanceButton";
 
 interface Props {
   coin: Coin;
@@ -130,6 +131,8 @@ export default function CoinCard({ coin, stale, selected, onSelect, onAsk }: Pro
           ถาม AI
         </button>
       </div>
+
+      <TradeOnBinanceButton symbol={coin.symbol} size="md" className="w-full justify-center" />
     </div>
   );
 }

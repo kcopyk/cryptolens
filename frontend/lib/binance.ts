@@ -23,9 +23,10 @@ export interface Ticker24h {
 }
 
 function pair(symbol: string): string {
-  const p = PAIRS[symbol.toUpperCase()];
-  if (!p) throw new Error(`Unknown symbol: ${symbol}`);
-  return p;
+  const s = symbol.toUpperCase();
+  // Fall back to `{SYMBOL}USDT` so watchlist coins beyond the default four
+  // (BTC/ETH/BNB/SOL) still resolve to a valid Binance stream/REST pair.
+  return PAIRS[s] ?? `${s}USDT`;
 }
 
 export async function fetchTicker24h(symbol: string): Promise<Ticker24h> {

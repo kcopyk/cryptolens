@@ -163,6 +163,73 @@ def market_mood(coins: list[dict]) -> str:
     return complete(prompt, max_tokens=80)
 
 
+DIGEST_DISCLAIMER = (
+    "ข้อมูลนี้สรุปจากราคา/ตัวชี้วัด/หัวข้อข่าวจริงเท่านั้น ไม่ใช่คำแนะนำการลงทุน "
+    "โปรดตัดสินใจด้วยตนเอง"
+)
+
+
+def daily_digest(coins: list[dict]) -> dict:
+    """Build a beginner-friendly 'what happened to your coins today' digest.
+
+    Strictly grounded in the numbers/headlines passed in — the model is told to
+    invent nothing and to give NO buy/sell advice (spec §3.2, liability §6.2).
+    Returns {"overview": str, "per_coin": {SYMBOL: str}, "disclaimer": str}.
+    """
+    if not coins:
+        return {"overview": "ยังไม่มีเหรียญใน watchlist", "per_coin": {}, "disclaimer": DIGEST_DISCLAIMER}
+
+    blocks = []
+    for c in coins:
+        ind = c.get("indicators") or {}
+        macd_hist = ind.get("macd_histogram", 0)
+        headlines = "; ".join(
+            f"[{n.get('sentiment', 'neutral')}] {n.get('title', '')}"
+            for n in (c.get("news") or [])[:3]
+        ) or "ไม่มีข่าวเด่น"
+        blocks.append(
+            f"{c['symbol']}: price ${c['price']:,.2f}, 24h {c['change_24h_pct']:+.2f}%, "
+            f"RSI {c.get('rsi', 'N/A')}, MACD hist {macd_hist:+.4f}\n"
+            f"  news: {headlines}"
+        )
+
+    symbols = ", ".join(c["symbol"] for c in coins)
+    prompt = (
+        "คุณเป็นผู้ช่วยสรุปข่าวคริปโตให้นักลงทุนมือใหม่ที่ไม่มีเวลานั่งเฝ้าจอ\n"
+        "สรุป 'วันนี้เหรียญในลิสต์มีอะไรเกิดขึ้น' จากข้อมูลจริงด้านล่างเท่านั้น "
+        "ห้ามแต่งราคา/ตัวเลข/ข่าวที่ไม่ได้ให้มา\n\n"
+        f"ข้อมูล ({symbols}):\n" + "\n".join(blocks) + "\n\n"
+        "ตอบเป็นภาษาไทย ใช้รูปแบบนี้เป๊ะ ๆ (หนึ่งบรรทัดต่อหัวข้อ):\n"
+        "OVERVIEW: <ภาพรวมตลาดวันนี้ 1 บรรทัด อิงทิศทางรวม + เหรียญนำ>\n"
+        + "\n".join(f"{c['symbol']}: <1-2 ประโยค อะไรขยับและทำไม อิงข่าว/ตัวเลขจริง>" for c in coins)
+        + "\n\nกฎ: อ้างตัวเลขจริง, ภาษาง่ายเหมาะมือใหม่, อธิบายศัพท์เทคนิคสั้น ๆ ถ้าใช้, "
+        "ห้ามให้คำแนะนำซื้อ/ขายหรือบอกว่าควรเข้า/ออก แค่เล่าว่าเกิดอะไรขึ้น"
+    )
+    raw = complete(prompt, max_tokens=90 + 60 * len(coins))
+
+    overview = ""
+    per_coin: dict[str, str] = {}
+    valid = {c["symbol"].upper() for c in coins}
+    for line in raw.splitlines():
+        line = line.strip().lstrip("-•").strip()
+        if not line or ":" not in line:
+            continue
+        label, _, text = line.partition(":")
+        label = label.strip().upper()
+        text = text.strip()
+        if label == "OVERVIEW":
+            overview = text
+        elif label in valid:
+            per_coin[label] = text
+
+    # Fallback: if the model ignored the format, surface the raw text rather
+    # than show nothing.
+    if not overview and not per_coin:
+        overview = raw.strip()
+
+    return {"overview": overview, "per_coin": per_coin, "disclaimer": DIGEST_DISCLAIMER}
+
+
 def ask_coin(coin_snapshot: dict, question: str) -> str:
     prompt = (
         f"You are answering a question about {coin_snapshot['symbol']} for a crypto beginner.\n"

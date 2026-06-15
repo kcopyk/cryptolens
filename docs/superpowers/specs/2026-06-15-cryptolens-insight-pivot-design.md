@@ -27,7 +27,7 @@
 | แกน retention | **watchlist + daily AI digest** → ต่อยอด alerts | ให้เหตุผลกลับมาใช้ทุกวัน เชื่อมกับ wedge "ประหยัดเวลา" โดยตรง |
 
 ### 1.3 ขอบเขตเฟส
-- **Phase 1 (เอกสารนี้ — โฟกัส):** watchlist + daily AI digest + deep-link "เทรดบน Binance"
+- **Phase 1 (เอกสารนี้ — โฟกัส):** watchlist + daily AI digest + deep-link "เทรดบน Binance" + **interactive chart ตีเส้นได้ (drawing tools แบบ TradingView)**
 - **Phase 2 (ภายหลัง):** read-only portfolio bridge + smart alerts
 - **Phase 0 (ผู้ใช้เลือกข้าม):** ทำ trading surface ให้ปลอดภัยพอ ship — ดู §6 "ความเสี่ยงค้าง"
 
@@ -39,6 +39,7 @@ User เปิด CryptoLens แล้ว:
 1. **เลือกเหรียญที่สนใจ** เก็บเป็น watchlist ส่วนตัว (persist ข้ามการเข้าใช้)
 2. เปิดมาเจอ **"สรุปวันนี้" (daily digest)** ของเหรียญใน watchlist — AI ย่อยข่าว + ความเคลื่อนไหวสำคัญเป็นภาษาคน อ่านจบใน ~30 วิ
 3. เมื่ออยากเทรด กด **"เทรดบน Binance"** แล้วเด้งไปหน้า Binance ของ pair นั้นทันที (CryptoLens ไม่ยิงออเดอร์เอง)
+4. **วิเคราะห์กราฟเองได้** — ตีเส้น trendline / fib / วัดระยะ บนกราฟ candlestick และเส้นที่วาด **persist** ต่อ user/เหรียญ (กลับมาเปิดยังอยู่)
 
 ตัวชี้วัด: user กลับมาเปิด digest ซ้ำ (retention) ไม่ใช่แค่เปิดครั้งเดียว
 
@@ -99,6 +100,34 @@ User เปิด CryptoLens แล้ว:
 
 ---
 
+### 3.4 Interactive Chart + Drawing Tools (แบบ TradingView)
+
+**แหล่งข้อมูลกราฟ (ยืนยันจากโค้ด):** ปัจจุบันดึงจาก **Binance ล้วน ไม่มี TradingView** — frontend ยิงตรง REST `https://api.binance.com` + WS `wss://stream.binance.com:9443` ผ่าน `lib/binance.ts` (`fetchKlines`, `subscribeKline`) → `useBinanceChart.ts`; backend `/api/candles` ก็ดึง Binance (`binance.py`). **คง feed เดิม ไม่เปลี่ยนแหล่ง**
+
+**ลิบรารี:** ใช้ **KLineChart** (open source, ฟรี, ไม่ต้องขอ access) ซึ่งมีเครื่องมือวาดในตัว: trendline, horizontal/vertical line, fibonacci retracement, parallel channel, วัดระยะ ฯลฯ
+- แทน/เสริม renderer เดิม (`CandlestickChart.tsx` / `ChartPanel.tsx`) ด้วย KLineChart โดยป้อน candle ชุดเดิมจาก `useBinanceChart` (history + realtime merge ยังใช้ logic เดิมได้)
+- toolbar เลือกเครื่องมือวาด + ลบ/ล้างเส้น + สลับ interval (reuse `CHART_INTERVALS`)
+- **ต่อยอด wedge:** แปะ marker ข่าว/indicator จาก `news.py` / `/insights` ลงบนแกนเวลาเดียวกัน (เช่น จุดข่าวสำคัญบนกราฟ) — ทำให้ "ที่เดียวจบ" มีจริง (Phase 1 อย่างน้อยทำ marker ข่าว, indicator overlay เป็น nice-to-have)
+
+**Persist เส้นที่วาด (per user/เหรียญ)**
+- KLineChart export/import overlay เป็น JSON ได้ → เก็บใน SQLite:
+  ```
+  chart_drawing(user_id TEXT, symbol TEXT, drawings JSON, updated_at TIMESTAMP,
+                PRIMARY KEY(user_id, symbol))
+  ```
+- Endpoints:
+  - `GET  /api/chart/drawings?symbol=BTC`  → คืน JSON overlay ของ user/เหรียญนั้น
+  - `PUT  /api/chart/drawings`             → `{symbol, drawings}` บันทึก (debounce ฝั่ง client ตอน user หยุดวาด)
+- identity ใช้ `X-User-ID` เดิม (low-stakes เหมือน watchlist)
+
+**Frontend**
+- คอมโพเนนต์ `lib/api.ts`: `fetchChartDrawings(symbol)`, `saveChartDrawings(symbol, drawings)`
+- เส้นที่วาด **ผูกกับเหรียญ** — เปลี่ยนเหรียญแล้วโหลด overlay ของเหรียญนั้น
+
+**หมายเหตุขอบเขต:** เป้าหมายคือ "ตีเส้นวิเคราะห์เองได้ + เซฟไว้" ไม่ใช่ลอก TradingView ครบทุกเครื่องมือ — เอาชุดที่ใช้บ่อย (trendline, horizontal, fib, measure) ให้ดีก่อน เครื่องมือ exotic เก็บทีหลัง
+
+---
+
 ## 4. การจัดการโค้ด Trading เดิม (พักไว้ที่ testnet)
 
 - คงไฟล์ `binance_trade.py`, `vault.py`, `OrderPanel.tsx`, endpoints `/api/order`, `/api/account/*` ไว้
@@ -113,14 +142,16 @@ User เปิด CryptoLens แล้ว:
 ```
 Frontend (Next.js)                 Backend (FastAPI)              External
 ─────────────────                  ─────────────────             ─────────
-WatchlistPanel  ──X-User-ID──►  /api/watchlist  ──►  SQLite (watchlist)
-DailyDigest     ──────────────►  /api/digest     ──►  Binance (price/indic)
-                                      │             ──►  news.py (3 sources)
+WatchlistPanel  ──X-User-ID──►  /api/watchlist        ──►  SQLite (watchlist)
+DailyDigest     ──────────────►  /api/digest           ──►  Binance (price/indic)
+                                      │                  ──►  news.py (3 sources)
                                       └──►  ai.py (Gemini→Groq) [+cache รายวัน]
-CoinCard CTA    ──(deep-link)──────────────────────►  Binance trade page
+Chart(KLineChart) ◄─candles─── lib/binance.ts ─────────►  Binance REST/WS (เดิม)
+   └ drawings ───X-User-ID──►  /api/chart/drawings      ──►  SQLite (chart_drawing)
+CoinCard CTA    ──(deep-link)────────────────────────────►  Binance trade page
 ```
 
-หลักการแยกหน่วย: watchlist (storage), digest (aggregation+AI), deep-link (pure client) แต่ละส่วนทดสอบแยกได้ ไม่พึ่งกันแน่น
+หลักการแยกหน่วย: watchlist (storage), digest (aggregation+AI), chart+drawings (Binance feed + overlay persist), deep-link (pure client) แต่ละส่วนทดสอบแยกได้ ไม่พึ่งกันแน่น
 
 ---
 
@@ -148,3 +179,5 @@ CoinCard CTA    ──(deep-link)───────────────�
 1. Digest แสดงแบบ "ต่อเหรียญ" ล้วน หรือมี "ภาพรวมตลาด 1 บรรทัด" (reuse `/mood`) นำก่อน? — *แนะนำ: มี mood นำ 1 บรรทัด แล้วตามด้วย bullet ต่อเหรียญ*
 2. เพดานจำนวนเหรียญใน watchlist (คุม token/quota) — *แนะนำเริ่มที่ 10*
 3. ปุ่ม deep-link fix quote เป็น USDT เสมอ หรือให้เลือก quote? — *แนะนำ: USDT เสมอใน v1*
+4. Phase 1 ต้องมี marker ข่าวบนกราฟเลยไหม หรือเริ่มแค่ drawing tools + persist ก่อน? — *แนะนำ: drawing+persist ก่อน, marker ข่าวเป็น stretch ใน Phase 1*
+5. เครื่องมือวาดชุดเริ่มต้น (trendline, horizontal, fib, measure) พอไหม หรืออยากได้เพิ่ม? — *แนะนำ: 4 ตัวนี้ก่อน*

@@ -174,6 +174,94 @@ export async function askCoin(symbol: string, question: string): Promise<AskResp
   return r.json();
 }
 
+// ─── Watchlist ────────────────────────────────────────────────────────
+
+export async function fetchWatchlist(): Promise<string[]> {
+  const r = await fetch(`${API}/api/watchlist`, { cache: "no-store", headers: getHeaders() });
+  if (!r.ok) throw new Error(`watchlist ${r.status}`);
+  const data: { symbols: string[] } = await r.json();
+  return data.symbols;
+}
+
+async function watchlistError(r: Response): Promise<never> {
+  const errText = await r.text();
+  try {
+    throw new Error(JSON.parse(errText).detail || `watchlist ${r.status}`);
+  } catch (e) {
+    if (e instanceof Error && e.message !== errText) throw e;
+    throw new Error(errText || `watchlist ${r.status}`);
+  }
+}
+
+export async function addToWatchlist(symbol: string): Promise<string[]> {
+  const r = await fetch(`${API}/api/watchlist`, {
+    method: "POST",
+    headers: { ...getHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol }),
+  });
+  if (!r.ok) await watchlistError(r);
+  return (await r.json()).symbols;
+}
+
+export async function removeFromWatchlist(symbol: string): Promise<string[]> {
+  const r = await fetch(`${API}/api/watchlist/${symbol.toUpperCase()}`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+  if (!r.ok) await watchlistError(r);
+  return (await r.json()).symbols;
+}
+
+// ─── Daily AI digest ──────────────────────────────────────────────────
+
+export interface DigestBody {
+  overview: string;
+  per_coin: Record<string, string>;
+  disclaimer: string;
+}
+
+export interface DigestResponse {
+  as_of: string;
+  day: string;
+  symbols: string[];
+  digest: DigestBody;
+  coins: { symbol: string; price: number; change_24h_pct: number }[];
+  cached: boolean;
+}
+
+export async function fetchDigest(): Promise<DigestResponse> {
+  const r = await fetch(`${API}/api/digest`, { cache: "no-store", headers: getHeaders() });
+  if (!r.ok) throw new Error(`digest ${r.status}`);
+  return r.json();
+}
+
+// ─── Chart drawings (per user/symbol overlay persistence) ─────────────
+
+export async function fetchChartDrawings(symbol: string): Promise<unknown[]> {
+  const r = await fetch(`${API}/api/chart/drawings?symbol=${symbol.toUpperCase()}`, {
+    cache: "no-store",
+    headers: getHeaders(),
+  });
+  if (!r.ok) throw new Error(`chart drawings ${r.status}`);
+  return (await r.json()).drawings ?? [];
+}
+
+export async function saveChartDrawings(symbol: string, drawings: unknown[]): Promise<void> {
+  const r = await fetch(`${API}/api/chart/drawings`, {
+    method: "PUT",
+    headers: { ...getHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol: symbol.toUpperCase(), drawings }),
+  });
+  if (!r.ok) throw new Error(`save chart drawings ${r.status}`);
+}
+
+// ─── Binance deep-link (act-fast CTA; CryptoLens places no orders) ─────
+
+/** Spot trade page for a coin, quoted in USDT (spec §3.3 / §8 Q3). */
+export function binanceTradeUrl(symbol: string): string {
+  return `https://www.binance.com/en/trade/${symbol.toUpperCase()}_USDT?type=spot`;
+}
+
 export interface Balance {
   asset: string;
   free: number;
