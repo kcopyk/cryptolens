@@ -32,6 +32,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS watchlist (
                 user_id    TEXT NOT NULL,
                 symbol     TEXT NOT NULL,
+                position   INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, symbol)
             );
@@ -53,20 +54,54 @@ def init_db() -> None:
             );
             """
         )
+
+        # Migration: add `position` to pre-existing watchlist tables and backfill
+        # it from the current created_at-desc order so display order is preserved.
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(watchlist)").fetchall()]
+        if "position" not in cols:
+            conn.execute("ALTER TABLE watchlist ADD COLUMN position INTEGER")
+        for (uid,) in conn.execute(
+            "SELECT DISTINCT user_id FROM watchlist WHERE position IS NULL"
+        ).fetchall():
+            rows = conn.execute(
+                "SELECT symbol FROM watchlist WHERE user_id = ? ORDER BY created_at DESC",
+                (uid,),
+            ).fetchall()
+            for i, r in enumerate(rows):
+                conn.execute(
+                    "UPDATE watchlist SET position = ? WHERE user_id = ? AND symbol = ?",
+                    (i, uid, r["symbol"]),
+                )
         conn.commit()
     finally:
         conn.close()
 
 
+def _is_empty(conn: sqlite3.Connection, user_id: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM watchlist WHERE user_id = ? LIMIT 1", (user_id,)
+    ).fetchone() is None
+
+
+def _materialize_defaults(conn: sqlite3.Connection, user_id: str) -> None:
+    """Seed the default coins with explicit positions on first curation, so an
+    explicit add/remove/reorder doesn't bounce back to the implicit defaults."""
+    conn.executemany(
+        "INSERT OR IGNORE INTO watchlist (user_id, symbol, position) VALUES (?, ?, ?)",
+        [(user_id, s, i) for i, s in enumerate(DEFAULT_WATCHLIST)],
+    )
+
+
 # ─── Watchlist ──────────────────────────────────────────────────────────
 
 def get_watchlist(user_id: str) -> list[str]:
-    """Return the user's symbols (newest first), or the defaults if empty."""
+    """Return the user's symbols in their saved order, or the defaults if empty."""
     init_db()
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT symbol FROM watchlist WHERE user_id = ? ORDER BY created_at DESC",
+            "SELECT symbol FROM watchlist WHERE user_id = ? "
+            "ORDER BY position IS NULL, position ASC, created_at ASC",
             (user_id,),
         ).fetchall()
     finally:
@@ -100,20 +135,21 @@ def count_watchlist(user_id: str) -> int:
 
 
 def add_to_watchlist(user_id: str, symbol: str) -> None:
-    """Insert a symbol. Idempotent. Seeds defaults first so a user's first
-    explicit add doesn't silently wipe the implicit default list."""
+    """Insert a symbol at the end. Idempotent. Seeds defaults first so a user's
+    first explicit add doesn't silently wipe the implicit default list."""
     init_db()
     symbol = symbol.upper()
     conn = _connect()
     try:
-        if is_watchlist_empty(user_id):
-            conn.executemany(
-                "INSERT OR IGNORE INTO watchlist (user_id, symbol) VALUES (?, ?)",
-                [(user_id, s) for s in DEFAULT_WATCHLIST],
-            )
+        if _is_empty(conn, user_id):
+            _materialize_defaults(conn, user_id)
+        next_pos = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM watchlist WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["p"]
         conn.execute(
-            "INSERT OR IGNORE INTO watchlist (user_id, symbol) VALUES (?, ?)",
-            (user_id, symbol),
+            "INSERT OR IGNORE INTO watchlist (user_id, symbol, position) VALUES (?, ?, ?)",
+            (user_id, symbol, next_pos),
         )
         conn.commit()
     finally:
@@ -121,24 +157,45 @@ def add_to_watchlist(user_id: str, symbol: str) -> None:
 
 
 def remove_from_watchlist(user_id: str, symbol: str) -> None:
-    """Remove a symbol. If this empties an explicit list, persist that empty
-    state with a tombstone-free approach: we keep the row count at zero and let
-    get_watchlist fall back to defaults only when the user has *never* curated."""
+    """Remove a symbol. Materializes defaults first so removing a default sticks
+    instead of bouncing back to the implicit default list."""
     init_db()
     symbol = symbol.upper()
     conn = _connect()
     try:
-        # Materialize defaults on first curation so removal sticks instead of
-        # bouncing back to the default list.
-        if is_watchlist_empty(user_id):
-            conn.executemany(
-                "INSERT OR IGNORE INTO watchlist (user_id, symbol) VALUES (?, ?)",
-                [(user_id, s) for s in DEFAULT_WATCHLIST],
-            )
+        if _is_empty(conn, user_id):
+            _materialize_defaults(conn, user_id)
         conn.execute(
             "DELETE FROM watchlist WHERE user_id = ? AND symbol = ?",
             (user_id, symbol),
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reorder_watchlist(user_id: str, symbols: list[str]) -> None:
+    """Persist an explicit ordering: position = index for each known symbol."""
+    init_db()
+    conn = _connect()
+    try:
+        if _is_empty(conn, user_id):
+            _materialize_defaults(conn, user_id)
+        existing = {
+            r["symbol"]
+            for r in conn.execute(
+                "SELECT symbol FROM watchlist WHERE user_id = ?", (user_id,)
+            ).fetchall()
+        }
+        pos = 0
+        for s in symbols:
+            su = s.upper()
+            if su in existing:
+                conn.execute(
+                    "UPDATE watchlist SET position = ? WHERE user_id = ? AND symbol = ?",
+                    (pos, user_id, su),
+                )
+                pos += 1
         conn.commit()
     finally:
         conn.close()

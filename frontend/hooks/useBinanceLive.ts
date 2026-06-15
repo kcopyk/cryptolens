@@ -43,7 +43,9 @@ export function useBinanceLive(backendCoins: Coin[] | null, symbols?: string[]) 
   // Watchlist-driven symbol set (falls back to the default four). Joined into a
   // stable key so effects re-run only when the actual list changes.
   const activeSymbols = symbols && symbols.length ? symbols : DEFAULT_SYMBOLS;
-  const symbolsKey = activeSymbols.join(",");
+  // Keyed on the symbol *set* (sorted) so a pure reorder doesn't re-bootstrap
+  // the whole market — only add/remove changes the set.
+  const symbolsKey = [...activeSymbols].sort().join(",");
 
   // Sync AI summary + news from backend
   useEffect(() => {

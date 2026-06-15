@@ -212,6 +212,16 @@ export async function removeFromWatchlist(symbol: string): Promise<string[]> {
   return (await r.json()).symbols;
 }
 
+export async function reorderWatchlist(symbols: string[]): Promise<string[]> {
+  const r = await fetch(`${API}/api/watchlist/reorder`, {
+    method: "PUT",
+    headers: { ...getHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ symbols }),
+  });
+  if (!r.ok) await watchlistError(r);
+  return (await r.json()).symbols;
+}
+
 // ─── Daily AI digest ──────────────────────────────────────────────────
 
 export interface DigestBody {

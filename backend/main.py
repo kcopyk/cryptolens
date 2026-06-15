@@ -230,6 +230,17 @@ async def add_watchlist(body: WatchlistBody, x_user_id: Optional[str] = Header(N
     return {"symbols": db.get_watchlist(user)}
 
 
+class ReorderBody(BaseModel):
+    symbols: list[str]
+
+
+@app.put("/api/watchlist/reorder")
+def reorder_watchlist(body: ReorderBody, x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    db.reorder_watchlist(user, body.symbols)
+    return {"symbols": db.get_watchlist(user)}
+
+
 @app.delete("/api/watchlist/{symbol}")
 def delete_watchlist(symbol: str, x_user_id: Optional[str] = Header(None)):
     user = _require_user(x_user_id)

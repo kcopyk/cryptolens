@@ -9,6 +9,7 @@ import {
   fetchInsights,
   fetchMood,
   fetchWatchlist,
+  reorderWatchlist,
   BinanceOrder,
   BinanceTrade,
   Balance,
@@ -232,6 +233,12 @@ function Dashboard() {
       .finally(() => setAiLoading(false));
   }, []);
 
+  // Pure reorder: persist the new order; no need to re-pull insights/market data.
+  const handleWatchlistReorder = useCallback((next: string[]) => {
+    setWatchlist(next);
+    reorderWatchlist(next).catch(() => {});
+  }, []);
+
   useEffect(() => {
     load();
   }, [load]);
@@ -250,6 +257,15 @@ function Dashboard() {
 
   const handleSelectCoin = (coin: Coin) => setChartCoin(coin);
   const loading = aiLoading || !marketReady;
+
+  // Market grid follows the watchlist order (liveCoins keeps bootstrap order).
+  const orderedCoins = watchlist.length
+    ? [...liveCoins].sort((a, b) => {
+        const ia = watchlist.indexOf(a.symbol);
+        const ib = watchlist.indexOf(b.symbol);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      })
+    : liveCoins;
 
   const handleCancelOrder = useCallback(
     async (symbol: string, orderId: number) => {
@@ -305,7 +321,7 @@ function Dashboard() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {loading
                   ? Array.from({ length: 4 }).map((_, i) => <CoinCardSkeleton key={i} />)
-                  : liveCoins.map((coin) => (
+                  : orderedCoins.map((coin) => (
                       <CoinCard
                         key={coin.symbol}
                         coin={coin}
@@ -420,6 +436,7 @@ function Dashboard() {
         selectedSymbol={chartCoin?.symbol}
         onSelect={handleSelectCoin}
         onChange={handleWatchlistChange}
+        onReorder={handleWatchlistReorder}
         max={10}
         overlay={watchlistMobile}
       />

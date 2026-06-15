@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Coin, addToWatchlist, removeFromWatchlist, formatPrice } from "@/lib/api";
 
 interface Props {
@@ -11,6 +11,8 @@ interface Props {
   selectedSymbol?: string;
   onSelect: (coin: Coin) => void;
   onChange: (symbols: string[]) => void;
+  /** Persist a new symbol order after drag-to-reorder. */
+  onReorder: (symbols: string[]) => void;
   max?: number;
   /** On mobile the panel floats over content instead of docking — show a backdrop. */
   overlay?: boolean;
@@ -29,12 +31,42 @@ export default function WatchlistSidebar({
   selectedSymbol,
   onSelect,
   onChange,
+  onReorder,
   max = 10,
   overlay = false,
 }: Props) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Local order for snappy drag feedback; resynced when the parent list changes.
+  const [items, setItems] = useState(symbols);
+  useEffect(() => setItems(symbols), [symbols.join(",")]);
+  const dragFrom = useRef<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+
+  const handleDragStart = (i: number) => () => {
+    dragFrom.current = i;
+  };
+  const handleDragOver = (i: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (dragOver !== i) setDragOver(i);
+  };
+  const handleDrop = (i: number) => () => {
+    const from = dragFrom.current;
+    dragFrom.current = null;
+    setDragOver(null);
+    if (from === null || from === i) return;
+    const next = [...items];
+    const [moved] = next.splice(from, 1);
+    next.splice(i, 0, moved);
+    setItems(next);
+    onReorder(next);
+  };
+  const handleDragEnd = () => {
+    dragFrom.current = null;
+    setDragOver(null);
+  };
 
   const bySymbol = new Map(coins.map((c) => [c.symbol, c]));
   const full = symbols.length >= max;
@@ -137,23 +169,41 @@ export default function WatchlistSidebar({
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar">
-            {symbols.map((sym) => {
+            {items.map((sym, i) => {
               const coin = bySymbol.get(sym);
               const selected = sym === selectedSymbol;
               const positive = (coin?.change_24h_pct ?? 0) >= 0;
               return (
                 <div
                   key={sym}
+                  draggable
+                  onDragStart={handleDragStart(i)}
+                  onDragOver={handleDragOver(i)}
+                  onDrop={handleDrop(i)}
+                  onDragEnd={handleDragEnd}
                   onClick={() => {
                     if (!coin) return;
                     onSelect(coin);
                     if (overlay) onToggle(); // close the floating panel to reveal the chart
                   }}
-                  className={`group flex items-center justify-between gap-2 px-3.5 py-2.5 border-b border-zinc-900 cursor-pointer transition-colors ${
+                  className={`group flex items-center gap-2 px-2.5 py-2.5 border-b border-zinc-900 cursor-pointer transition-colors ${
+                    dragOver === i ? "border-t-2 border-t-violet-500" : ""
+                  } ${
                     selected ? "bg-violet-600/15 border-l-2 border-l-violet-500" : "hover:bg-zinc-900 border-l-2 border-l-transparent"
                   }`}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="shrink-0 text-zinc-600 group-hover:text-zinc-400 cursor-grab active:cursor-grabbing"
+                    aria-hidden="true"
+                    title="ลากเพื่อสลับตำแหน่ง"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="9" cy="6" r="1.4" /><circle cx="15" cy="6" r="1.4" />
+                      <circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" />
+                      <circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" />
+                    </svg>
+                  </span>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span className={`text-sm font-bold ${selected ? "text-violet-300" : "text-zinc-100"}`}>{sym}</span>
                     <span className="text-[10px] text-zinc-600">/USDT</span>
                   </div>
@@ -188,7 +238,7 @@ export default function WatchlistSidebar({
                 </div>
               );
             })}
-            {symbols.length === 0 && (
+            {items.length === 0 && (
               <p className="text-[11px] text-zinc-600 italic px-3.5 py-4">ยังไม่มีเหรียญ — เพิ่มด้านบน</p>
             )}
           </div>
