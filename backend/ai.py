@@ -46,7 +46,7 @@ def _make_gemini_adapter(api_key: str, label: str) -> Callable[[str, int], str]:
     return call
 
 
-def _make_groq_adapter(api_key: str) -> Callable[[str, int], str]:
+def _make_groq_adapter(api_key: str, label: str = "groq") -> Callable[[str, int], str]:
     from groq import Groq
     client = Groq(api_key=api_key)
 
@@ -60,12 +60,12 @@ def _make_groq_adapter(api_key: str) -> Callable[[str, int], str]:
             )
             text = (resp.choices[0].message.content or "").strip()
             if not text:
-                raise QuotaError("groq: empty response")
-            log.info("served by groq")
+                raise QuotaError(f"{label}: empty response")
+            log.info(f"served by {label}")
             return text
         except Exception as e:
             if _is_quota_error(e):
-                raise QuotaError(f"groq: {e}") from e
+                raise QuotaError(f"{label}: {e}") from e
             raise
 
     return call
@@ -78,11 +78,13 @@ def _build_chain() -> list[Callable[[str, int], str]]:
     if k := os.environ.get("GEMINI_API_KEY_2"):
         chain.append(_make_gemini_adapter(k, "gemini2"))
     if k := os.environ.get("GROQ_API_KEY"):
-        chain.append(_make_groq_adapter(k))
+        chain.append(_make_groq_adapter(k, "groq"))
+    if k := os.environ.get("GROQ_API_KEY_2"):
+        chain.append(_make_groq_adapter(k, "groq2"))
     if not chain:
         raise RuntimeError(
             "No AI providers configured. Set at least one of "
-            "GEMINI_API_KEY, GEMINI_API_KEY_2, GROQ_API_KEY in .env"
+            "GEMINI_API_KEY, GEMINI_API_KEY_2, GROQ_API_KEY, GROQ_API_KEY_2 in .env"
         )
     return chain
 

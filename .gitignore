@@ -3,21 +3,56 @@
 .env.*
 !.env.example
 
-# Python
-__pycache__/
-*.pyc
-.venv/
-venv/
-
-# Node / Next.js
-node_modules/
-.next/
-out/
-
 # OS / Editor
 .DS_Store
 .idea/
 .vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # Database files
 *.db
+*.sqlite
+
+# Python (Backend / General)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+ENV/
+htmlcov/
+.tox/
+.coverage
+.cache
+.pytest_cache/
+
+# Node / Next.js (Frontend / General)
+node_modules/
+.next/
+out/
+build/
+dist/
+.pnp
+.pnp.*
+.yarn/
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Logs and debug
+*debug.log*
+*error.log*
+.vercel
+*.pem
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts

@@ -1,64 +1,92 @@
-# CryptoLens — แผนเดินหน้า Real Trading (Binance)
+# CryptoLens — แผนเดินหน้า "ผู้ช่วยเข้าใจตลาด" (ไม่ใช่ระบบเทรด)
 
-> สรุปจากการ grill ทิศทางต่อจาก proposal — 2026-06-11
+> เขียนใหม่จากการ grill ทิศทาง — 2026-06-16
+> แผนนี้ **แทนที่** แผน "Real Trading (Binance)" ฉบับ 2026-06-11 ทั้งฉบับ (ดู §ของเดิมที่ถูกแช่แข็ง)
 
-## ตำแหน่งปัจจุบัน
+## ลูกค้าตัวจริง (เลือกคนเดียว)
 
-- **Intelligence Hub เสร็จแล้ว** (สิ่งที่ proposal เรียก "แผนสำรอง"): backend มี `/insights`, `/candles`, `/news`, `/mood`, `/ask` ครบ + indicators + ข่าว 3 แหล่ง + AI chat (Gemini→Groq)
-- **Real Trading ยังเป็นศูนย์**: `OrderPanel.tsx` เป็น mock ล้วน (balance hardcode $10,000 + เหรียญคงที่, `MockOrder`, ไม่ยิงจริง) · backend **ไม่มี** endpoint ส่งออเดอร์, ไม่มี HMAC signing, ไม่มี auth, ไม่มีการจัดการ API key
+**Office worker ที่ถือคริปโตอยู่แล้ว แต่ไม่มีเวลา/ความรู้จะตีความกราฟเอง** — กลุ่ม glance-and-go
 
-## เป้าหมาย (Definition of Done)
+ไม่ใช่เทรดเดอร์ที่เฝ้าจอทั้งวัน คนกลุ่มนั้นมี Binance + TradingView ที่ดีกว่าเราอยู่แล้ว เราไม่แข่งสนามนั้น
 
-ขึ้น **mainnet เทรดเงินจริง** โดยถือ Binance API key ของผู้ใช้ — แต่ผ่าน testnet เป็นสนามพิสูจน์ก่อนเสมอ
+## คุณค่าหลัก — "ทำไมคนถึงจะยอมใช้เรา"
 
-## Decisions ที่ล็อกแล้ว
+**ฆ่า 5 แท็บ** — วันนี้คนกลุ่มนี้ต้องเปิด Binance (ราคา) + TradingView (กราฟ) + Bloomberg + เว็บข่าว แล้วประกอบเองในหัว เรายุบให้เหลือ **หน้าเดียว ภาษาคน** ที่ตอบคำถามเดียวว่า *"วันนี้ต้องสนใจอะไรไหม"* แล้วจบ
+
+ไม่มีเจ้าไหนให้ "มุมรวม + ย่อยแล้ว + ภาษาคน" สำหรับคริปโตรายย่อย — นั่นคือช่องของเรา
+
+## หลักการที่ล็อกแล้ว (Decisions)
 
 | หัวข้อ | ตัดสิน |
 |---|---|
-| ทิศทาง | testnet-first → mainnet เป็นเป้า |
-| เก็บ API key | encrypt-at-rest ใน DB (master key ใน secrets manager ไม่ใช่ในโค้ด) |
-| Auth | OAuth (Google) — ไม่เก็บ password เอง |
-| Key scoping | บังคับ trade-only + verify ผ่าน Binance ว่า withdrawal ปิด |
-| สร้างจริง | ต่อ mock → real แล้วค่อยจริง (แต่ endpoint แรกยิง testnet จริง อย่า return ปลอม) |
+| ลูกค้าหลัก | office worker ถือเหรียญอยู่ ไม่มีเวลาเฝ้ากราฟ |
+| คุณค่าหลัก | aggregator หน้าเดียว ภาษาคน — แทนที่ 5 แท็บ |
+| นิยาม "จบในที่เดียว" | หน้าเดียวตอบ "วันนี้ต้องสนใจอะไรไหม" — **ไม่ใช่** "มีทุกอย่างของ Binance" |
+| หน้าแรก | digest เป็นพระเอกเต็มจอ · กราฟ/order book/indicator = กดเข้าไปดูเองได้ ไม่โผล่มาแย่งความสนใจ |
+| ระดับคุณค่า | **ระดับ 2** "ช่วยเข้าใจจนตัดสินใจเอง" — **ไม่ใช่** signal "ควรซื้อ/ขาย" |
+| การแสดงผลต่อเหรียญ | print "สถานะ + เหตุผลเป็น fact" ให้ผู้ใช้สรุปซื้อ/ขายเองในหัว |
+| คะแนนสรุป | แท่งเดียว 0–100 = **"Heat / โซน"** (เย็น–กลาง–ร้อนเกิน) **ไม่ใช่ "ความน่าซื้อ"** |
+| การลงมือเทรด | **deep-link ออกไป Binance** — เราไม่ยิงออเดอร์เอง ไม่ถือ trade key |
+| การส่งถึงผู้ใช้ | เว็บเป็นหลัก + push (LINE/อีเมล) 1 ครั้ง/วัน เป็น free trial → paid |
 
-## เงื่อนไขก่อนขึ้น mainnet (ไม่ใช่ทางเลือก)
+## กติกาเหล็ก (ห้ามข้าม)
 
-การปล่อยแพลตฟอร์มที่ถือ key + แตะเงินจริงของผู้ใช้ มี liability จริง ไม่ใช่สิ่งที่ intern ship เองได้ ก่อนแตะ mainnet ต้องมีครบ:
+1. **ห้าม print คำว่า "ควรซื้อ / ควรขาย / น่าซื้อ" บนจอ** — วินาทีที่ออก verdict เรากลายเป็นคนขาย signal: รับ liability เต็ม, โดน ก.ล.ต. มอง, ต้องมี track record, และเลขถูกจับผิดได้ทุกวัน
+2. **คะแนน Heat ต้อง deterministic** — คำนวณด้วยสูตรจาก RSI + volatility percentile + จำนวนข่าวบวก/ลบ **ห้ามให้ LLM มโนตัวเลข** กดทีไรได้เลขเดิม และกดดู "ทำไมได้ 82" ได้เสมอ
+3. **Heat วัด "ร้อน/เย็น" ไม่ใช่ "น่าซื้อ"** — RSI 78 กับ RSI 22 ร้อนทั้งคู่คนละทิศ เราแค่บอกว่า "สุดโต่งแค่ไหน" ไม่ตัดสินทิศ เพราะคริปโตไม่มีมูลค่าพื้นฐาน (กำไร/P/E) ให้ยึดแบบหุ้น ป้าย "น่าซื้อ" จึงเป็นความแม่นปลอม
+4. **digest ใส่ "บริบท/ความรุนแรง" ได้ แต่ห้ามสั่ง** — เช่น *"-8% วันนี้ แต่ยังอยู่ในกรอบแกว่งปกติ 30 วัน"* (fact) ไม่ใช่ *"ควรขาย"* (คำสั่ง)
+5. **เราไม่แตะเงินผู้ใช้** — ไม่ยิงออเดอร์ ไม่ถือ trade key การลงมือเกิดบน Binance ของผู้ใช้เอง
 
-1. **Sign-off เป็นลายลักษณ์อักษร** จากหัวหน้า/บริษัท
-2. **Security review** โดยคนที่ไม่ใช่ผู้เขียนโค้ด
+## ตำแหน่งปัจจุบัน
 
-จนกว่าจะครบ → mainnet ถูกบล็อกไว้ที่ env flag
+- **Intelligence Hub มีของแล้ว**: backend `/insights`, `/candles`, `/news`, `/mood`, `/ask`, `/digest` + indicators + ข่าว 3 แหล่ง + AI chat (Gemini→Groq) + watchlist
+- **`TradeOnBinanceButton.tsx` มีอยู่แล้ว** ← นี่คือทางลงมือที่เราจะใช้ (deep-link) แทนการสร้างระบบเทรดเอง
+- **ช่องว่างที่ต้องสร้าง**: manual holdings, portfolio-weighted digest, Heat bar, per-coin fact card, push delivery
 
 ## Milestones (ลำดับลงมือ)
 
-### 1. Backend trading endpoint จริงบน testnet ← unknown เสี่ยงสุด ทำก่อน
-- `POST /api/order` sign ด้วย HMAC-SHA256, ยิง Binance **Spot Testnet** จริง (key ใน `.env` ก่อน)
-- จัดการ `recvWindow` / `timestamp` ให้ถูก
-- จัดการ symbol filters: `LOT_SIZE` (rounding ปริมาณ), `minNotional`, `PRICE_FILTER` (rounding ราคา)
-- handle error จาก Binance (-2010 insufficient balance, -1013 filter failure ฯลฯ) ให้ผู้ใช้อ่านรู้เรื่อง
+### 1. Manual holdings — ปลดล็อก "พอร์ตของคุณ" ไม่ใช่แค่ "ตลาด"
+- ผู้ใช้กรอกเองว่าถือเหรียญไหนกี่หน่วย (ยังไม่แตะ API key, ไม่มี liability, เริ่มได้ทันที)
+- เก็บใน user account ปกติ (auth สำหรับบัญชี/บันทึก holdings/subscription — **ไม่ใช่** auth เพื่อถือ trade key)
+- เหตุผล: "ควรห่วงไหม" ตอบไม่ได้ถ้าไม่รู้สัดส่วนถือ — BTC -8% ที่เป็น 3% ของพอร์ต กับ 70% ของพอร์ต คือคนละเรื่อง นี่คือหัวใจของระดับ 2
 
-### 2. ต่อ OrderPanel → endpoint จริง
-- เลิก hardcode balance — ดึงจาก Binance account endpoint (`GET /api/account` แบบ signed) แทน
-- map mock order flow → API จริง, แสดงผล fill จริง
+### 2. Heat bar — แท่งเดียว 0–100 glance จบ
+- สูตร deterministic จาก RSI + volatility percentile + news sentiment (ฝั่ง backend, reproducible)
+- โซน เย็น–กลาง–ร้อนเกิน + กดดูที่มาของคะแนนได้ทุกตัว
+- **ไม่มีคำว่าซื้อ/ขาย** บนแกนหรือ label
 
-### 3. Auth + encrypted key vault
-- OAuth (Google) login + DB + user model
-- เพิ่ม key flow: ผู้ใช้วาง API key → **verify ทันที** ว่า key enable spot trading และ **withdrawal = DISABLED** (ถ้าถอนได้ → ปฏิเสธ)
-- encrypt key ก่อนเก็บ (เช่น Fernet), master key อยู่ใน secrets manager
-- (แนะนำเสริม) บอกผู้ใช้ตั้ง IP whitelist บน Binance
+### 3. Per-coin fact card — "สถานะ + ทำไม"
+- ต่อเหรียญ: Heat + เหตุผลเป็น fact เช่น *"RSI 78 (overbought) · ลง 12% จากจุดสูง 7 วัน · ข่าวลบ 2/3 วันนี้"*
+- ผู้ใช้สรุปเองว่าจะทำอะไร — เราไม่สรุปแทน
 
-### 4. Order safety (gap ที่จดไว้ — ทำก่อน mainnet)
-- confirm dialog ก่อนส่งทุกออเดอร์
-- max order size cap
-- rate-limit ฝั่ง app
+### 4. Portfolio-weighted digest — digest ที่พูดถึง "เงินคุณ" จริง
+- ถ่วงน้ำหนัก digest ด้วยสัดส่วนถือจาก milestone 1
+- "วันนี้ต้องสนใจ X เพราะมันเป็น Y% ของพอร์ตคุณ และกำลังร้อนผิดปกติ"
 
-### 5. Mainnet gate
-- env flag `TRADING_ENV=testnet|mainnet` ปิดไว้ที่ testnet
-- ปลดเป็น mainnet ได้ต่อเมื่อมี sign-off + security review จาก milestone "เงื่อนไข" เท่านั้น
+### 5. ปุ่มลงมือ = deep-link Binance
+- ใช้ `TradeOnBinanceButton.tsx` ที่มีอยู่ — "เข้าใจที่นี่ → กดปุ่ม → ไปกดซื้อ/ขายเองบน Binance"
+- ลบความจำเป็นของ vault / HMAC / order endpoint / mainnet gate ทั้งหมด
 
-## หมายเหตุความเสี่ยง
+### 6. Push delivery (LINE/อีเมล) — free trial → paid
+- ส่ง digest 3–5 บรรทัด เช้าก่อนเข้างาน 1 ครั้ง/วัน (เนื้อหา = ก้อน digest ที่มีอยู่)
+- **free**: push แบบ trial (เช่น 1 เหรียญ / สรุปสั้น) ให้ผู้ใช้ "ติด" ก่อน
+- **paid**: push ทั้ง watchlist + ลึกกว่า + ถามต่อใน AI chat ได้
+- เหตุผล: คนไม่มีเวลา = คนที่จะไม่เปิดเว็บเอง ต้องให้ push วิ่งไปหา และต้องให้ชิมฟรีก่อนถึงจะเห็นค่า
 
-- Order placement เป็น **irreversible** — bug = เงินจริงหาย จึงต้อง testnet + confirm + size cap ครบก่อน
-- ห้าม log API secret หรือ key ลง stdout/ไฟล์เด็ดขาด
-- แยก testnet/mainnet base URL ชัดเจน อย่าให้ flag หลุดสลับโดยไม่ตั้งใจ
+## ของเดิมที่ถูก "แช่แข็ง" (อย่าลงแรงต่อ)
+
+ระบบยิงออเดอร์ในแอปทั้งหมดถูกพักไว้ เพราะ (1) เสิร์ฟ persona เทรดเดอร์ที่เราตัดทิ้ง (2) intern ship เองไม่ได้ ต้องรอ sign-off + security review (3) ดูดเวลา dev จาก differentiator จริง:
+
+- ❄️ `POST /api/order` + HMAC signing + ยิง Binance จริง (testnet/mainnet)
+- ❄️ ต่อ `OrderPanel` → endpoint จริง
+- ❄️ encrypted key vault สำหรับ **trade key** + verify withdrawal-disabled
+- ❄️ order safety (confirm / size cap / rate-limit ของการยิงออเดอร์)
+- ❄️ mainnet gate (`TRADING_ENV`)
+
+> หมายเหตุ: ถ้าอนาคตอยากทำ "ดึงยอดถืออัตโนมัติ" ให้ใช้ **read-only key** เท่านั้น (อ่านอย่างเดียว ความเสี่ยงต่ำกว่า trade key มาก) และยังต้อง encrypt-at-rest — แต่เป็น *upgrade ทีหลัง* ของ milestone 1 ไม่ใช่งานตอนนี้
+
+## หมายเหตุความเสี่ยงที่ยังเหลือ
+
+- **Heat/digest ต้อง grounded กับเลขจริง** — ถ้า AI มโน ข้อมูลผิดเรื่องเงินคน trust ตายทันที ทุกคำกล่าวต้องอ้างถึงตัวเลข/ข่าวที่มีจริง
+- **ห้ามให้ภาษา "บริบท" ไหลข้ามเส้นเป็นคำแนะนำ** — review prompt ของ digest เป็นระยะ
+- **เลขที่ deterministic ต้องเปิดให้ผู้ใช้ตรวจที่มาได้** — โปร่งใสคือเกราะกัน "หาว่าเราชี้นำ"
