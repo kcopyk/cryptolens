@@ -52,6 +52,15 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, day)
             );
+
+            CREATE TABLE IF NOT EXISTS holding (
+                user_id    TEXT NOT NULL,
+                symbol     TEXT NOT NULL,
+                amount     REAL NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, symbol)
+            );
             """
         )
 
@@ -196,6 +205,73 @@ def reorder_watchlist(user_id: str, symbols: list[str]) -> None:
                     (pos, user_id, su),
                 )
                 pos += 1
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ─── Manual holdings (PLAN milestone 1) ─────────────────────────────────
+# "พอร์ตของคุณ" — the user types in what they hold (symbol + amount). No API
+# key, no liability. This is what turns "the market" into "your money" and
+# powers the portfolio-weighted digest. Cap = WATCHLIST_MAX to bound digest
+# token/quota usage (same rationale as the watchlist cap).
+
+def get_holdings(user_id: str) -> list[dict]:
+    """Return the user's holdings as [{symbol, amount}], newest-edited first."""
+    init_db()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT symbol, amount FROM holding WHERE user_id = ? "
+            "ORDER BY updated_at DESC, symbol ASC",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [{"symbol": r["symbol"], "amount": r["amount"]} for r in rows]
+
+
+def count_holdings(user_id: str) -> int:
+    init_db()
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM holding WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row["n"])
+
+
+def upsert_holding(user_id: str, symbol: str, amount: float) -> None:
+    """Add or update a held amount. Idempotent on (user, symbol)."""
+    init_db()
+    symbol = symbol.upper()
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO holding (user_id, symbol, amount, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, symbol)
+            DO UPDATE SET amount = excluded.amount, updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, symbol, amount),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_holding(user_id: str, symbol: str) -> None:
+    init_db()
+    symbol = symbol.upper()
+    conn = _connect()
+    try:
+        conn.execute(
+            "DELETE FROM holding WHERE user_id = ? AND symbol = ?",
+            (user_id, symbol),
+        )
         conn.commit()
     finally:
         conn.close()

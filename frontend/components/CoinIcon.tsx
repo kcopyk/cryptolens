@@ -20,14 +20,14 @@ export default function CoinIcon({ asset, size = "md" }: Props) {
   // Normalize symbol (e.g. BTC/USDT -> BTC, or BTCUSDT -> BTC)
   const cleanAsset = asset.split("/")[0].trim().toUpperCase();
   const meta = COIN_META[cleanAsset];
-  const color = meta?.color ?? "#8b5cf6";
+  const color = meta?.color ?? "#27e5b0";
   const label = cleanAsset.slice(0, 2);
 
   const iconUrl = `https://assets.coincap.io/assets/icons/${cleanAsset.toLowerCase()}@2x.png`;
 
   if (!imgError && cleanAsset) {
     return (
-      <div className={`${SIZES[size]} rounded-full overflow-hidden shrink-0 shadow-sm bg-zinc-800 flex items-center justify-center`}>
+      <div className={`${SIZES[size]} rounded-full overflow-hidden shrink-0 shadow-sm bg-panel flex items-center justify-center`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={iconUrl}

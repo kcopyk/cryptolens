@@ -12,7 +12,7 @@ export default function AllocationChart({ rows, size = 140 }: Props) {
   if (active.length === 0) {
     return (
       <div
-        className="rounded-full border-2 border-dashed border-zinc-800 flex items-center justify-center text-xs text-zinc-600"
+        className="rounded-full border-2 border-dashed border-line flex items-center justify-center text-xs text-muted"
         style={{ width: size, height: size }}
       >
         —

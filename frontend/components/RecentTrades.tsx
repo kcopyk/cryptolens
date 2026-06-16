@@ -25,12 +25,12 @@ export default function RecentTrades({ symbol, onSelectPrice }: Props) {
   return (
     <div className="flex flex-col h-full text-xs select-none">
       <div className="px-3 pt-3 pb-2">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-300">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-ink">
           รายการซื้อขายล่าสุด
         </span>
       </div>
 
-      <div className="grid grid-cols-3 px-3 pb-1 text-right text-[10px] uppercase tracking-wide text-zinc-600">
+      <div className="grid grid-cols-3 px-3 pb-1 text-right text-[10px] uppercase tracking-wide text-muted">
         <span className="text-left">ราคา (USDT)</span>
         <span>จำนวน</span>
         <span>เวลา</span>
@@ -38,11 +38,11 @@ export default function RecentTrades({ symbol, onSelectPrice }: Props) {
 
       <div className="flex-1 overflow-y-auto thin-scroll min-h-0">
         {!ready ? (
-          <div className="flex items-center justify-center py-10 text-[11px] text-zinc-600 animate-pulse">
+          <div className="flex items-center justify-center py-10 text-[11px] text-muted animate-pulse">
             กำลังเชื่อมต่อ stream…
           </div>
         ) : trades.length === 0 ? (
-          <div className="flex items-center justify-center py-10 text-[11px] text-zinc-600">
+          <div className="flex items-center justify-center py-10 text-[11px] text-muted">
             ยังไม่มีรายการ
           </div>
         ) : (
@@ -53,16 +53,16 @@ export default function RecentTrades({ symbol, onSelectPrice }: Props) {
                 key={t.id}
                 type="button"
                 onClick={() => onSelectPrice?.(t.price)}
-                className="grid grid-cols-3 w-full px-3 py-[3px] text-right font-mono text-[11px] leading-tight hover:bg-zinc-800/40 transition-colors"
+                className="grid grid-cols-3 w-full px-3 py-[3px] text-right font-mono text-[11px] leading-tight hover:bg-ink/6 transition-colors"
               >
-                <span className={`text-left ${isBuy ? "text-emerald-400" : "text-red-400"}`}>
+                <span className={`text-left ${isBuy ? "text-mint" : "text-coral"}`}>
                   {t.price.toLocaleString("en-US", {
                     minimumFractionDigits: dec,
                     maximumFractionDigits: dec,
                   })}
                 </span>
-                <span className="text-zinc-300">{t.qty.toFixed(t.qty >= 1000 ? 1 : 4)}</span>
-                <span className="text-zinc-500">{fmtTime(t.time)}</span>
+                <span className="text-ink">{t.qty.toFixed(t.qty >= 1000 ? 1 : 4)}</span>
+                <span className="text-muted">{fmtTime(t.time)}</span>
               </button>
             );
           })

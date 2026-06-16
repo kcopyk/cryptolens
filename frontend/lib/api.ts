@@ -230,12 +230,23 @@ export interface DigestBody {
   disclaimer: string;
 }
 
+export interface DigestCoin {
+  symbol: string;
+  price: number;
+  change_24h_pct: number;
+  heat?: number | null;
+  heat_zone?: HeatZone | null;
+  weight_pct?: number | null;
+  deviation?: Deviation | null;
+}
+
 export interface DigestResponse {
   as_of: string;
   day: string;
   symbols: string[];
+  weighted?: boolean;
   digest: DigestBody;
-  coins: { symbol: string; price: number; change_24h_pct: number }[];
+  coins: DigestCoin[];
   cached: boolean;
 }
 
@@ -243,6 +254,121 @@ export async function fetchDigest(): Promise<DigestResponse> {
   const r = await fetch(`${API}/api/digest`, { cache: "no-store", headers: getHeaders() });
   if (!r.ok) throw new Error(`digest ${r.status}`);
   return r.json();
+}
+
+// ─── Heat (deterministic intensity 0-100 — PLAN milestone 2) ──────────
+
+export type HeatZone = "cold" | "mid" | "hot";
+
+export interface HeatComponents {
+  rsi: { value: number; heat: number; weight: number };
+  volatility: { percentile: number; today_range_pct: number; heat: number; weight: number };
+  news: { bullish: number; bearish: number; heat: number; weight: number };
+}
+
+export interface HeatFacts {
+  rsi: number;
+  rsi_label: string;
+  change_24h_pct: number;
+  drop_from_high_7d_pct: number | null;
+  gain_from_low_7d_pct: number | null;
+  news_bullish: number;
+  news_bearish: number;
+  news_total: number;
+}
+
+// ─── Deviation — the WEDGE hero signal: normal vs abnormal vs OWN baseline ──
+export type DeviationStatus = "normal" | "mild" | "abnormal";
+export type DeviationDirection = "up" | "down" | "flat";
+
+export interface Deviation {
+  status: DeviationStatus;
+  direction: DeviationDirection;
+  today_return_pct: number | null;
+  z: number | null;
+  baseline_mean_pct: number | null;
+  baseline_std_pct: number | null;
+  normal_low_pct: number | null;
+  normal_high_pct: number | null;
+  window_days: number;
+  enough_data: boolean;
+}
+
+export interface CoinHeat {
+  score: number;
+  zone: HeatZone;
+  components: HeatComponents;
+  facts: HeatFacts;
+  deviation?: Deviation;
+  price: number | null;
+}
+
+/** Plain-language status label — context, never a verdict (PLAN iron rule §3/§4). */
+export function deviationLabel(status: DeviationStatus): string {
+  if (status === "abnormal") return "ผิดปกติชัด";
+  if (status === "mild") return "เริ่มผิดปกติ";
+  return "ปกติ";
+}
+
+export interface HeatResponse {
+  as_of: string;
+  heat: Record<string, CoinHeat>;
+}
+
+export async function fetchHeat(symbols: string[]): Promise<HeatResponse> {
+  const q = symbols.map((s) => s.toUpperCase()).join(",");
+  const r = await fetch(`${API}/api/heat?symbols=${q}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`heat ${r.status}`);
+  return r.json();
+}
+
+/** Thai zone label — intensity only, never buy/sell (PLAN iron rule §3). */
+export function heatZoneLabel(zone: HeatZone): string {
+  if (zone === "hot") return "ร้อนเกิน";
+  if (zone === "mid") return "กลาง";
+  return "เย็น";
+}
+
+// ─── Manual holdings (PLAN milestone 1) ───────────────────────────────
+
+export interface Holding {
+  symbol: string;
+  amount: number;
+}
+
+export async function fetchHoldings(): Promise<Holding[]> {
+  const r = await fetch(`${API}/api/holdings`, { cache: "no-store", headers: getHeaders() });
+  if (!r.ok) throw new Error(`holdings ${r.status}`);
+  return (await r.json()).holdings ?? [];
+}
+
+async function holdingError(r: Response): Promise<never> {
+  const errText = await r.text();
+  try {
+    throw new Error(JSON.parse(errText).detail || `holdings ${r.status}`);
+  } catch (e) {
+    if (e instanceof Error && e.message !== errText) throw e;
+    throw new Error(errText || `holdings ${r.status}`);
+  }
+}
+
+export async function upsertHolding(symbol: string, amount: number): Promise<Holding[]> {
+  const r = await fetch(`${API}/api/holdings`, {
+    method: "POST",
+    headers: { ...getHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol: symbol.toUpperCase(), amount }),
+  });
+  if (!r.ok) await holdingError(r);
+  return (await r.json()).holdings ?? [];
+}
+
+export async function removeHolding(symbol: string): Promise<Holding[]> {
+  const r = await fetch(`${API}/api/holdings/${symbol.toUpperCase()}`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+  if (!r.ok) await holdingError(r);
+  return (await r.json()).holdings ?? [];
 }
 
 // ─── Chart drawings (per user/symbol overlay persistence) ─────────────
@@ -420,18 +546,18 @@ export function formatVolume(v: number): string {
 }
 
 export function macdTrend(histogram: number): { label: string; color: string } {
-  if (histogram > 0.5) return { label: "Bullish crossover", color: "text-emerald-400" };
-  if (histogram > 0) return { label: "Mild bullish", color: "text-emerald-300" };
-  if (histogram < -0.5) return { label: "Bearish crossover", color: "text-red-400" };
-  if (histogram < 0) return { label: "Mild bearish", color: "text-orange-400" };
-  return { label: "Neutral", color: "text-zinc-400" };
+  if (histogram > 0.5) return { label: "Bullish crossover", color: "text-mint" };
+  if (histogram > 0) return { label: "Mild bullish", color: "text-mint" };
+  if (histogram < -0.5) return { label: "Bearish crossover", color: "text-coral" };
+  if (histogram < 0) return { label: "Mild bearish", color: "text-coral/70" };
+  return { label: "Neutral", color: "text-muted" };
 }
 
 export function bbPosition(price: number, ind: Indicators): { label: string; color: string } {
-  if (price >= ind.bb_upper) return { label: "Above upper band", color: "text-red-400" };
-  if (price <= ind.bb_lower) return { label: "Below lower band", color: "text-emerald-400" };
-  if (price > ind.bb_middle) return { label: "Upper half", color: "text-zinc-300" };
-  return { label: "Lower half", color: "text-zinc-400" };
+  if (price >= ind.bb_upper) return { label: "Above upper band", color: "text-coral" };
+  if (price <= ind.bb_lower) return { label: "Below lower band", color: "text-mint" };
+  if (price > ind.bb_middle) return { label: "Upper half", color: "text-ink" };
+  return { label: "Lower half", color: "text-muted" };
 }
 
 export interface MockOrder {

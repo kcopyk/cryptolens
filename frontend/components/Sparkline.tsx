@@ -20,7 +20,7 @@ export default function Sparkline({ data, width = 120, height = 36, positive }: 
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
 
-  const color = positive ? "#22c55e" : "#ef4444";
+  const color = positive ? "#27e5b0" : "#ff6b6b";
 
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="overflow-visible">

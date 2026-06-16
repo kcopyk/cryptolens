@@ -50,11 +50,11 @@ export default function SearchableDropdown({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between gap-2.5 bg-zinc-800 hover:bg-zinc-750 text-zinc-100 font-bold text-xs px-3.5 py-2 rounded-lg border border-zinc-700 hover:border-zinc-600 transition-colors focus:outline-none cursor-pointer min-w-[125px]"
+        className="flex items-center justify-between gap-2.5 bg-ink/6 hover:bg-ink/10 text-ink font-bold text-xs px-3.5 py-2 rounded-lg border border-line hover:border-mint/30 transition-colors focus:outline-none cursor-pointer min-w-[125px]"
       >
         <span>{currentSymbol} / USDT</span>
         <svg
-          className={`w-3.5 h-3.5 text-zinc-400 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+          className={`w-3.5 h-3.5 text-muted transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -66,14 +66,14 @@ export default function SearchableDropdown({
       {/* Popover Panel */}
       {isOpen && (
         <div
-          className={`absolute mt-2 w-56 rounded-xl bg-zinc-950/95 backdrop-blur-md border border-zinc-800 shadow-2xl z-50 p-2 animate-fade-in-down ${
+          className={`absolute mt-2 w-56 rounded-xl bg-base/95 backdrop-blur-md border border-line shadow-2xl z-50 p-2 animate-fade-in-down ${
             align === "right" ? "right-0" : "left-0"
           }`}
         >
           {/* Search Input */}
           <div className="relative flex items-center mb-1.5">
             <svg
-              className="absolute left-2.5 w-3.5 h-3.5 text-zinc-500"
+              className="absolute left-2.5 w-3.5 h-3.5 text-muted"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -91,7 +91,7 @@ export default function SearchableDropdown({
               placeholder="ค้นหาเหรียญ... (e.g. BTC)"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg text-xs pl-8 pr-3 py-2.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20"
+              className="w-full bg-panel border border-line rounded-lg text-xs pl-8 pr-3 py-2.5 text-ink placeholder-muted focus:outline-none focus:border-mint focus:ring-1 focus:ring-mint/20"
             />
           </div>
 
@@ -108,8 +108,8 @@ export default function SearchableDropdown({
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-lg text-left transition-colors ${
                     c.symbol === currentSymbol
-                      ? "bg-violet-600 text-white"
-                      : "text-zinc-300 hover:bg-zinc-900 hover:text-white"
+                      ? "bg-mint text-base"
+                      : "text-muted hover:bg-ink/6 hover:text-ink"
                   }`}
                 >
                   <span>{c.symbol} / USDT</span>
@@ -121,7 +121,7 @@ export default function SearchableDropdown({
                 </button>
               ))
             ) : (
-              <div className="text-[11px] text-zinc-600 text-center py-4 italic">ไม่พบเหรียญที่ค้นหา</div>
+              <div className="text-[11px] text-muted text-center py-4 italic">ไม่พบเหรียญที่ค้นหา</div>
             )}
           </div>
         </div>

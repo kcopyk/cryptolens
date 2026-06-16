@@ -69,8 +69,8 @@ export default function CandlestickChart({ candles, interval, height = 420 }: Pr
     const chart = createChart(containerRef.current, {
       ...priceChartOptions,
       layout: {
-        background: { type: ColorType.Solid, color: "#18181b" },
-        textColor: "#a1a1aa",
+        background: { type: ColorType.Solid, color: "#12161c" },
+        textColor: "#a7adb5",
       },
       grid: {
         vertLines: { color: "#27272a" },
@@ -88,12 +88,12 @@ export default function CandlestickChart({ candles, interval, height = 420 }: Pr
     });
 
     candleRef.current = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderUpColor: "#22c55e",
-      borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
+      upColor: "#27e5b0",
+      downColor: "#ff6b6b",
+      borderUpColor: "#27e5b0",
+      borderDownColor: "#ff6b6b",
+      wickUpColor: "#27e5b0",
+      wickDownColor: "#ff6b6b",
     });
 
     ema9Ref.current = chart.addSeries(LineSeries, { color: "#38bdf8", lineWidth: 2, title: "EMA9" });
@@ -164,8 +164,8 @@ export function MacdMiniChart({ candles, interval, height = 100 }: Props) {
     const chart = createChart(containerRef.current, {
       ...macdChartOptions,
       layout: {
-        background: { type: ColorType.Solid, color: "#18181b" },
-        textColor: "#71717a",
+        background: { type: ColorType.Solid, color: "#12161c" },
+        textColor: "#a7adb5",
       },
       grid: { vertLines: { visible: false }, horzLines: { color: "#27272a" } },
       rightPriceScale: { borderColor: "#3f3f46", scaleMargins: { top: 0.15, bottom: 0.15 } },
@@ -210,7 +210,7 @@ export function MacdMiniChart({ candles, interval, height = 100 }: Props) {
         candles.map((c, i) => ({
           time: c.time as UTCTimestamp,
           value: histogram[i],
-          color: histogram[i] >= 0 ? "#22c55e80" : "#ef444480",
+          color: histogram[i] >= 0 ? "#27e5b080" : "#ff6b6b80",
         }))
       );
       macdRef.current.setData(candles.map((c, i) => ({ time: c.time as UTCTimestamp, value: line[i] })));
@@ -219,7 +219,7 @@ export function MacdMiniChart({ candles, interval, height = 100 }: Props) {
       barCountRef.current = candles.length;
     } else {
       const v = histogram[histogram.length - 1];
-      histRef.current.update({ time: t, value: v, color: v >= 0 ? "#22c55e80" : "#ef444480" });
+      histRef.current.update({ time: t, value: v, color: v >= 0 ? "#27e5b080" : "#ff6b6b80" });
       macdRef.current.update({ time: t, value: line[line.length - 1] });
       signalRef.current.update({ time: t, value: signal[signal.length - 1] });
     }
@@ -241,8 +241,8 @@ export function RsiMiniChart({ candles, interval, height = 80 }: Props) {
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: "#18181b" },
-        textColor: "#71717a",
+        background: { type: ColorType.Solid, color: "#12161c" },
+        textColor: "#a7adb5",
       },
       grid: { vertLines: { visible: false }, horzLines: { color: "#27272a" } },
       rightPriceScale: {
@@ -255,14 +255,14 @@ export function RsiMiniChart({ candles, interval, height = 80 }: Props) {
     });
 
     rsiRef.current = chart.addSeries(LineSeries, {
-      color: "#a78bfa",
+      color: "#27e5b0",
       lineWidth: 2,
       priceFormat: { type: "price", precision: 1, minMove: 0.1 },
     });
 
     rsiRef.current.createPriceLine({
       price: 70,
-      color: "#ef444466",
+      color: "#ff6b6b66",
       lineWidth: 1,
       lineStyle: LineStyle.Dashed,
       axisLabelVisible: true,
@@ -270,7 +270,7 @@ export function RsiMiniChart({ candles, interval, height = 80 }: Props) {
     });
     rsiRef.current.createPriceLine({
       price: 30,
-      color: "#22c55e66",
+      color: "#27e5b066",
       lineWidth: 1,
       lineStyle: LineStyle.Dashed,
       axisLabelVisible: true,

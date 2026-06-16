@@ -10,20 +10,25 @@ interface Props {
 export default function MoodBar({ mood, loading }: Props) {
   if (loading) {
     return (
-      <div className="w-full px-6 py-4 bg-zinc-900 border-b border-zinc-800">
-        <div className="h-5 bg-zinc-700 rounded animate-pulse w-2/3" />
+      <div className="w-full px-6 py-4 bg-panel border-b border-line">
+        <div className="h-5 bg-line rounded animate-pulse w-2/3" />
       </div>
     );
   }
 
   return (
-    <div className="w-full px-6 py-4 bg-zinc-900 border-b border-zinc-800 flex items-center gap-3">
-      <span className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Market</span>
-      <span className="text-sm text-zinc-100 font-medium leading-snug">
+    <div className="w-full px-6 py-4 bg-panel border-b border-line flex items-center gap-3">
+      <span className="flex items-center gap-2 shrink-0">
+        <span className="live-dot" aria-hidden />
+        <span className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-muted">
+          Market Mood
+        </span>
+      </span>
+      <span className="text-sm text-ink font-medium leading-snug">
         {mood?.mood ?? "—"}
       </span>
       {mood?.stale && (
-        <span className="ml-auto text-xs text-amber-400 border border-amber-400/30 px-2 py-0.5 rounded">
+        <span className="ml-auto text-xs text-muted border border-line px-2 py-0.5 rounded">
           stale
         </span>
       )}

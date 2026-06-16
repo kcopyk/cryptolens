@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional, Any
 
 import cache
+import metrics
 import binance as bnb
 import indicators as ind
 import news as news_api
@@ -13,6 +14,7 @@ import ai
 import binance_trade
 import vault
 import db
+import heat as heat_mod
 
 app = FastAPI(title="CryptoLens")
 
@@ -60,6 +62,17 @@ async def fetch_coin(symbol: str) -> dict:
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/metrics")
+def ai_metrics():
+    """Measured token usage, latency, and projected cost across recent AI calls.
+
+    Answers the Week 2 'cost & latency awareness' question with real numbers
+    rather than estimates. Free-tier spend is $0; est_cost_usd is a paid-tier
+    projection so the team can see what the feature would cost at scale.
+    """
+    return metrics.snapshot()
 
 
 @app.get("/api/insights")
@@ -193,6 +206,58 @@ async def ask(body: AskBody):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+# ─── Heat score (deterministic — PLAN milestone 2) ──────────────────────
+
+
+async def _get_snapshot(symbol: str) -> dict:
+    """Reuse the cached insights snapshot (rsi/news/price); fetch if missing."""
+    snap = cache.get(f"snapshot:{symbol}") or cache.get_stale(f"snapshot:{symbol}")
+    if not snap:
+        snap = await fetch_coin(symbol)
+        cache.set(f"snapshot:{symbol}", {**snap, "as_of": now_iso()})
+    return snap
+
+
+async def _get_daily_candles(symbol: str, days: int = 30) -> list[dict]:
+    cache_key = f"daily:{symbol}:{days}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    try:
+        candles = await bnb.get_ohlc_klines(symbol, "1d", days)
+    except Exception:
+        candles = cache.get_stale(cache_key) or []
+    cache.set(cache_key, candles)
+    return candles
+
+
+async def _heat_for(symbol: str) -> dict:
+    snap, daily = await asyncio.gather(
+        _get_snapshot(symbol),
+        _get_daily_candles(symbol),
+    )
+    rsi = snap.get("rsi", 50)
+    news = snap.get("news") or []
+    change = snap.get("change_24h_pct", 0.0)
+    result = heat_mod.compute_heat(rsi, daily, news)
+    result["facts"] = heat_mod.compute_facts(rsi, daily, news, change)
+    result["deviation"] = heat_mod.compute_deviation(daily)
+    result["price"] = snap.get("price")
+    return result
+
+
+@app.get("/api/heat")
+async def get_heat(symbols: str = Query(default=",".join(DEFAULT_SYMBOLS))):
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not sym_list:
+        return {"as_of": now_iso(), "heat": {}}
+    try:
+        results = await asyncio.gather(*[_heat_for(s) for s in sym_list])
+        return {"as_of": now_iso(), "heat": dict(zip(sym_list, results))}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 # ─── Insight-first Phase 1: watchlist · digest · chart drawings ──────────
 
 def _require_user(x_user_id: Optional[str]) -> str:
@@ -248,10 +313,58 @@ def delete_watchlist(symbol: str, x_user_id: Optional[str] = Header(None)):
     return {"symbols": db.get_watchlist(user)}
 
 
+# ─── Manual holdings (PLAN milestone 1) ─────────────────────────────────
+
+
+class HoldingBody(BaseModel):
+    symbol: str
+    amount: float
+
+
+@app.get("/api/holdings")
+def get_holdings(x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    return {"holdings": db.get_holdings(user)}
+
+
+@app.post("/api/holdings")
+async def upsert_holding(body: HoldingBody, x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    symbol = body.symbol.strip().upper()
+    if not symbol.isalnum():
+        raise HTTPException(status_code=400, detail=f"Invalid symbol: {symbol}")
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="จำนวนต้องมากกว่า 0")
+    existing = {h["symbol"] for h in db.get_holdings(user)}
+    if symbol not in existing and db.count_holdings(user) >= db.WATCHLIST_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"พอร์ตเต็ม (สูงสุด {db.WATCHLIST_MAX} เหรียญ)",
+        )
+    if not await bnb.validate_symbol(symbol):
+        raise HTTPException(status_code=400, detail=f"ไม่พบเหรียญ {symbol} บน Binance (ต้องมีคู่ {symbol}USDT)")
+    db.upsert_holding(user, symbol, body.amount)
+    return {"holdings": db.get_holdings(user)}
+
+
+@app.delete("/api/holdings/{symbol}")
+def delete_holding(symbol: str, x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    db.remove_holding(user, symbol)
+    return {"holdings": db.get_holdings(user)}
+
+
 @app.get("/api/digest")
 async def digest(x_user_id: Optional[str] = Header(None)):
     user = _require_user(x_user_id)
-    symbols = db.get_watchlist(user)[: db.WATCHLIST_MAX]
+    # Portfolio-weighted: prefer the user's real holdings (their money), fall
+    # back to the watchlist when they haven't entered any yet (PLAN milestone 4).
+    holdings = db.get_holdings(user)
+    holding_amounts = {h["symbol"]: h["amount"] for h in holdings}
+    if holdings:
+        symbols = [h["symbol"] for h in holdings][: db.WATCHLIST_MAX]
+    else:
+        symbols = db.get_watchlist(user)[: db.WATCHLIST_MAX]
     day = today_utc()
 
     cached = db.get_digest_cache(user, day)
@@ -267,17 +380,53 @@ async def digest(x_user_id: Optional[str] = Header(None)):
                 cache.set(f"snapshot:{s}", {**snap, "as_of": now_iso()})
             coins.append(snap)
 
+        # Attach Heat + portfolio weight so the digest can say "X is Y% of your
+        # portfolio and running unusually hot" — grounded, never a buy/sell call.
+        daily_lists = await asyncio.gather(*[_get_daily_candles(s) for s in symbols])
+        total_value = sum(
+            holding_amounts.get(c["symbol"], 0) * (c.get("price") or 0) for c in coins
+        )
+        for c, daily in zip(coins, daily_lists):
+            h = heat_mod.compute_heat(c.get("rsi", 50), daily, c.get("news") or [])
+            c["heat"] = h["score"]
+            c["heat_zone"] = h["zone"]
+            # Deviation = the wedge: is today abnormal vs THIS coin's own baseline.
+            c["deviation"] = heat_mod.compute_deviation(daily)
+            if total_value > 0 and c["symbol"] in holding_amounts:
+                c["weight_pct"] = round(
+                    holding_amounts[c["symbol"]] * (c.get("price") or 0) / total_value * 100, 1
+                )
+            else:
+                c["weight_pct"] = None
+
+        # Lead with what's NOTABLE today: abnormal-vs-own-baseline coins first
+        # (the panic-killer wedge), heaviest holding breaking ties. A big holding
+        # behaving normally isn't "something to attend to" — an abnormal move is.
+        _dev_rank = {"abnormal": 2, "mild": 1, "normal": 0}
+        coins.sort(
+            key=lambda c: (
+                _dev_rank.get((c.get("deviation") or {}).get("status"), 0),
+                c.get("weight_pct") or 0,
+            ),
+            reverse=True,
+        )
+
         result = ai.daily_digest(coins)
         payload = {
             "as_of": now_iso(),
             "day": day,
-            "symbols": symbols,
+            "symbols": [c["symbol"] for c in coins],
+            "weighted": total_value > 0,
             "digest": result,
             "coins": [
                 {
                     "symbol": c["symbol"],
                     "price": c["price"],
                     "change_24h_pct": c["change_24h_pct"],
+                    "heat": c.get("heat"),
+                    "heat_zone": c.get("heat_zone"),
+                    "weight_pct": c.get("weight_pct"),
+                    "deviation": c.get("deviation"),
                 }
                 for c in coins
             ],

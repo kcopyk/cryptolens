@@ -301,14 +301,14 @@ export default function OrderPanel({
   }, [toast]);
 
   return (
-    <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-4 flex flex-col justify-between h-full min-h-[420px] relative">
+    <div className="bg-panel/80 border border-line rounded-xl p-4 flex flex-col justify-between h-full min-h-[420px] relative">
       {/* Toast Alert */}
       {toast && (
         <div
           className={`absolute top-2 left-2 right-2 p-3 rounded-lg text-xs z-50 flex items-center justify-between shadow-lg border animate-fade-in-down ${
             toast.type === "success"
-              ? "bg-emerald-950/90 text-emerald-300 border-emerald-800"
-              : "bg-red-950/90 text-red-300 border-red-800"
+              ? "bg-mint/10 text-mint border-mint/20"
+              : "bg-coral/10 text-coral border-coral/20"
           }`}
         >
           <span>{toast.message}</span>
@@ -321,8 +321,8 @@ export default function OrderPanel({
       <div>
         {/* Coin Pair Header */}
         {!hidePairHeader && (
-          <div className="flex items-center justify-between mb-3.5 pb-2.5 border-b border-zinc-900">
-            <span className="text-xs font-bold text-zinc-300">Spot Trading</span>
+          <div className="flex items-center justify-between mb-3.5 pb-2.5 border-b border-line">
+            <span className="text-xs font-bold text-ink">Spot Trading</span>
             {onSelectCoin && allCoins.length > 0 ? (
               <SearchableDropdown
                 currentSymbol={coin.symbol}
@@ -331,7 +331,7 @@ export default function OrderPanel({
                 align="right"
               />
             ) : (
-              <span className="text-xs font-mono font-bold text-zinc-100 bg-zinc-900 px-2.5 py-0.5 rounded border border-zinc-800">
+              <span className="text-xs font-mono font-bold text-ink bg-panel px-2.5 py-0.5 rounded border border-line">
                 {coin.symbol} / USDT
               </span>
             )}
@@ -339,7 +339,7 @@ export default function OrderPanel({
         )}
 
         {/* Buy/Sell Tabs */}
-        <div className="flex bg-zinc-900 rounded-lg p-0.5 mb-4">
+        <div className="flex bg-panel rounded-lg p-0.5 mb-4">
           <button
             onClick={() => {
               setActiveTab("buy");
@@ -349,8 +349,8 @@ export default function OrderPanel({
             }}
             className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${
               activeTab === "buy"
-                ? "bg-emerald-600 text-white shadow"
-                : "text-zinc-400 hover:text-zinc-200"
+                ? "bg-mint text-base shadow"
+                : "text-muted hover:text-ink"
             }`}
           >
             ซื้อ (Buy)
@@ -364,8 +364,8 @@ export default function OrderPanel({
             }}
             className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${
               activeTab === "sell"
-                ? "bg-red-600 text-white shadow"
-                : "text-zinc-400 hover:text-zinc-200"
+                ? "bg-coral text-base shadow"
+                : "text-muted hover:text-ink"
             }`}
           >
             ขาย (Sell)
@@ -373,13 +373,13 @@ export default function OrderPanel({
         </div>
 
         {/* Limit / Market Selector */}
-        <div className="flex gap-4 border-b border-zinc-900 pb-2 mb-4">
+        <div className="flex gap-4 border-b border-line pb-2 mb-4">
           <button
             onClick={() => setOrderType("limit")}
             className={`text-xs font-medium pb-1 border-b-2 transition-all ${
               orderType === "limit"
-                ? "border-violet-500 text-violet-400"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-mint text-mint"
+                : "border-transparent text-muted hover:text-ink"
             }`}
           >
             Limit
@@ -388,8 +388,8 @@ export default function OrderPanel({
             onClick={() => setOrderType("market")}
             className={`text-xs font-medium pb-1 border-b-2 transition-all ${
               orderType === "market"
-                ? "border-violet-500 text-violet-400"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-mint text-mint"
+                : "border-transparent text-muted hover:text-ink"
             }`}
           >
             Market
@@ -397,7 +397,7 @@ export default function OrderPanel({
         </div>
 
         {/* Available Balance */}
-        <div className="flex justify-between text-[11px] text-zinc-500 mb-3 font-mono">
+        <div className="flex justify-between text-[11px] text-muted mb-3 font-mono">
           <span>มีให้ใช้งาน:</span>
           {activeTab === "buy" ? (
             <span>{usdtBalance.toLocaleString("en-US", { minimumFractionDigits: 2 })} USDT</span>
@@ -412,19 +412,19 @@ export default function OrderPanel({
         <form onSubmit={handleSubmit} className="space-y-3">
           {/* Price Field */}
           <div>
-            <div className="relative flex items-center bg-zinc-900 border border-zinc-800 rounded-lg focus-within:border-zinc-700">
-              <span className="pl-3 text-xs text-zinc-500 w-16">ราคา</span>
+            <div className="relative flex items-center bg-panel border border-line rounded-lg focus-within:border-mint/30">
+              <span className="pl-3 text-xs text-muted w-16">ราคา</span>
               <input
                 type="text"
                 disabled={orderType === "market"}
                 value={price}
                 onChange={(e) => handlePriceChange(e.target.value)}
-                className="w-full bg-transparent border-0 py-2.5 pr-12 text-right text-xs text-zinc-100 focus:ring-0 focus:outline-none disabled:text-zinc-500 font-mono"
+                className="w-full bg-transparent border-0 py-2.5 pr-12 text-right text-xs text-ink focus:ring-0 focus:outline-none disabled:text-muted font-mono"
               />
-              <span className="absolute right-3 text-[10px] text-zinc-500 font-bold">USDT</span>
+              <span className="absolute right-3 text-[10px] text-muted font-bold">USDT</span>
             </div>
             {orderType === "market" && (
-              <p className="text-[10px] text-zinc-500 mt-1 pl-1">
+              <p className="text-[10px] text-muted mt-1 pl-1">
                 * ซื้อขายที่ราคาตลาดปัจจุบันทันที (ไม่ต้องระบุราคาเอง)
               </p>
             )}
@@ -432,8 +432,8 @@ export default function OrderPanel({
 
           {/* Amount Field */}
           <div>
-            <div className="relative flex items-center bg-zinc-900 border border-zinc-800 rounded-lg focus-within:border-zinc-700">
-              <span className="pl-3 text-xs text-zinc-500 w-16">จำนวน</span>
+            <div className="relative flex items-center bg-panel border border-line rounded-lg focus-within:border-mint/30">
+              <span className="pl-3 text-xs text-muted w-16">จำนวน</span>
               <input
                 type="number"
                 step="any"
@@ -441,9 +441,9 @@ export default function OrderPanel({
                 placeholder="0.00"
                 value={amount}
                 onChange={(e) => handleAmountChange(e.target.value)}
-                className="w-full bg-transparent border-0 py-2.5 pr-14 text-right text-xs text-zinc-100 focus:ring-0 focus:outline-none font-mono"
+                className="w-full bg-transparent border-0 py-2.5 pr-14 text-right text-xs text-ink focus:ring-0 focus:outline-none font-mono"
               />
-              <span className="absolute right-3 text-[10px] text-zinc-500 font-bold">{coin.symbol}</span>
+              <span className="absolute right-3 text-[10px] text-muted font-bold">{coin.symbol}</span>
             </div>
           </div>
 
@@ -456,8 +456,8 @@ export default function OrderPanel({
                 onClick={() => handlePercentClick(pct)}
                 className={`py-1 text-[10px] font-semibold rounded transition-all border ${
                   percent === pct
-                    ? "bg-zinc-800 border-zinc-600 text-zinc-100"
-                    : "bg-zinc-900/40 border-zinc-900 text-zinc-500 hover:text-zinc-300 hover:border-zinc-800"
+                    ? "bg-ink/10 border-line text-ink"
+                    : "bg-panel/40 border-line text-muted hover:text-ink hover:border-mint/30"
                 }`}
               >
                 {pct}%
@@ -467,17 +467,17 @@ export default function OrderPanel({
 
           {/* Total Field */}
           <div>
-            <div className="relative flex items-center bg-zinc-900 border border-zinc-800 rounded-lg focus-within:border-zinc-700">
-              <span className="pl-3 text-xs text-zinc-500 w-16">ยอดรวม</span>
+            <div className="relative flex items-center bg-panel border border-line rounded-lg focus-within:border-mint/30">
+              <span className="pl-3 text-xs text-muted w-16">ยอดรวม</span>
               <input
                 type="number"
                 step="any"
                 placeholder="0.00"
                 value={total}
                 onChange={(e) => handleTotalChange(e.target.value)}
-                className="w-full bg-transparent border-0 py-2.5 pr-12 text-right text-xs text-zinc-100 focus:ring-0 focus:outline-none font-mono"
+                className="w-full bg-transparent border-0 py-2.5 pr-12 text-right text-xs text-ink focus:ring-0 focus:outline-none font-mono"
               />
-              <span className="absolute right-3 text-[10px] text-zinc-500 font-bold">USDT</span>
+              <span className="absolute right-3 text-[10px] text-muted font-bold">USDT</span>
             </div>
           </div>
         </form>
@@ -489,7 +489,7 @@ export default function OrderPanel({
           <button
             onClick={() => onLinkClick?.()}
             type="button"
-            className="w-full py-3 text-xs font-bold rounded-lg text-white bg-violet-600 hover:bg-violet-500 transition-all shadow-md active:scale-[0.98] cursor-pointer"
+            className="w-full py-3 text-xs font-bold rounded-lg text-base bg-mint hover:bg-mint/90 transition-all shadow-md active:scale-[0.98] cursor-pointer"
           >
             เชื่อม Testnet API key เพื่อเทรดจริง
           </button>
@@ -497,10 +497,10 @@ export default function OrderPanel({
           <button
             onClick={handleSubmit}
             disabled={isSubmitting}
-            className={`w-full py-3 text-xs font-bold rounded-lg text-white transition-all shadow-md active:scale-[0.98] disabled:opacity-50 cursor-pointer ${
+            className={`w-full py-3 text-xs font-bold rounded-lg text-base transition-all shadow-md active:scale-[0.98] disabled:opacity-50 cursor-pointer ${
               activeTab === "buy"
-                ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-950/20"
-                : "bg-red-600 hover:bg-red-500 shadow-red-950/20"
+                ? "bg-mint hover:bg-mint/90"
+                : "bg-coral hover:bg-coral/90"
             }`}
           >
             {isSubmitting
@@ -510,7 +510,7 @@ export default function OrderPanel({
                 : `ขาย (Sell) ${coin.symbol}`}
           </button>
         )}
-        <p className="text-[10px] text-zinc-600 text-center mt-2">
+        <p className="text-[10px] text-muted text-center mt-2">
           {linked
             ? "ส่งคำสั่งจริงไปยัง Binance Spot Testnet · ตัดยอดจากพอร์ต testnet"
             : "ยังไม่ได้เชื่อม key — ยอดที่แสดงเป็น 0 จนกว่าจะผูกบัญชี testnet"}
@@ -520,9 +520,9 @@ export default function OrderPanel({
       {/* Confirmation Dialog Modal */}
       {isConfirmOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-fade-in-down">
-            <div className="px-5 py-4 border-b border-zinc-900">
-              <h3 className="text-xs uppercase tracking-wider text-zinc-500 font-semibold font-sans">
+          <div className="bg-panel border border-line rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-fade-in-down">
+            <div className="px-5 py-4 border-b border-line">
+              <h3 className="text-xs uppercase tracking-wider text-muted font-semibold font-sans">
                 ยืนยันคำสั่งเทรด (Confirm Order)
               </h3>
             </div>
@@ -531,59 +531,59 @@ export default function OrderPanel({
               <div className="text-center py-1">
                 <span className={`inline-block font-bold text-xs px-3 py-1 rounded-full ${
                   activeTab === "buy" 
-                    ? "bg-emerald-950/80 text-emerald-400 border border-emerald-900/30" 
-                    : "bg-red-950/80 text-red-400 border border-red-900/30"
+                    ? "bg-mint/10 text-mint border border-mint/20" 
+                    : "bg-coral/10 text-coral border border-coral/20"
                 }`}>
                   {activeTab === "buy" ? "ซื้อ (BUY)" : "ขาย (SELL)"} {coin.symbol} / USDT
                 </span>
               </div>
               
-              <div className="border border-zinc-900 rounded-xl overflow-hidden bg-zinc-900/20 font-sans">
-                <div className="grid grid-cols-2 text-xs border-b border-zinc-900 p-2.5">
-                  <span className="text-zinc-500">ประเภทคำสั่ง:</span>
-                  <span className="text-right text-zinc-200 font-semibold">{orderType === "limit" ? "Limit Order" : "Market Order"}</span>
+              <div className="border border-line rounded-xl overflow-hidden bg-panel/20 font-sans">
+                <div className="grid grid-cols-2 text-xs border-b border-line p-2.5">
+                  <span className="text-muted">ประเภทคำสั่ง:</span>
+                  <span className="text-right text-ink font-semibold">{orderType === "limit" ? "Limit Order" : "Market Order"}</span>
                 </div>
-                <div className="grid grid-cols-2 text-xs border-b border-zinc-900 p-2.5">
-                  <span className="text-zinc-500">ราคา:</span>
-                  <span className="text-right text-zinc-200 font-mono font-semibold">
+                <div className="grid grid-cols-2 text-xs border-b border-line p-2.5">
+                  <span className="text-muted">ราคา:</span>
+                  <span className="text-right text-ink font-mono font-semibold">
                     {orderType === "limit" ? `$${parseFloat(price).toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "ราคาตลาด (Market Price)"}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 text-xs border-b border-zinc-900 p-2.5">
-                  <span className="text-zinc-500">จำนวนเหรียญ:</span>
-                  <span className="text-right text-zinc-200 font-mono font-semibold">
+                <div className="grid grid-cols-2 text-xs border-b border-line p-2.5">
+                  <span className="text-muted">จำนวนเหรียญ:</span>
+                  <span className="text-right text-ink font-mono font-semibold">
                     {parseFloat(amount).toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 })} {coin.symbol}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 text-xs p-2.5 bg-zinc-900/40">
-                  <span className="text-zinc-400 font-bold">ยอดรวมทั้งหมด:</span>
-                  <span className="text-right text-zinc-100 font-mono font-bold text-sm">
+                <div className="grid grid-cols-2 text-xs p-2.5 bg-panel/40">
+                  <span className="text-muted font-bold">ยอดรวมทั้งหมด:</span>
+                  <span className="text-right text-ink font-mono font-bold text-sm">
                     ${parseFloat(total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
                   </span>
                 </div>
               </div>
 
-              <div className="p-3 bg-zinc-900/10 border border-zinc-900 rounded-xl flex items-start gap-2.5">
-                <span className="text-amber-500 text-xs mt-0.5">⚠️</span>
-                <p className="text-[10px] text-zinc-500 font-sans leading-relaxed">
+              <div className="p-3 bg-panel/10 border border-line rounded-xl flex items-start gap-2.5">
+                <span className="text-warn text-xs mt-0.5">⚠️</span>
+                <p className="text-[10px] text-muted font-sans leading-relaxed">
                   **คำเตือนความเสี่ยง:** คำสั่งนี้จะส่งตรงไปยังบัญชีกระดานเทรดจริง การทำธุรกรรมในตลาดคริปโตเคอร์เรนซีไม่สามารถกู้คืนหรือยกเลิกรายการหลังจากจับคู่สำเร็จแล้วได้ โปรดตรวจสอบความถูกต้อง
                 </p>
               </div>
             </div>
             
-            <div className="px-5 py-4 border-t border-zinc-900 bg-zinc-950/60 flex gap-2">
+            <div className="px-5 py-4 border-t border-line bg-panel/60 flex gap-2">
               <button
                 onClick={() => setIsConfirmOpen(false)}
-                className="flex-1 py-2.5 text-xs font-semibold bg-zinc-850 hover:bg-zinc-800 text-zinc-400 border border-zinc-800 rounded-xl transition-all cursor-pointer text-center"
+                className="flex-1 py-2.5 text-xs font-semibold bg-ink/6 hover:bg-ink/10 text-muted border border-line rounded-xl transition-all cursor-pointer text-center"
               >
                 ยกเลิก (Cancel)
               </button>
               <button
                 onClick={handleConfirmOrder}
-                className={`flex-1 py-2.5 text-xs font-bold text-white rounded-xl transition-all shadow-md cursor-pointer text-center ${
+                className={`flex-1 py-2.5 text-xs font-bold text-base rounded-xl transition-all shadow-md cursor-pointer text-center ${
                   activeTab === "buy"
-                    ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-950/20"
-                    : "bg-red-600 hover:bg-red-500 shadow-red-950/20"
+                    ? "bg-mint hover:bg-mint/90"
+                    : "bg-coral hover:bg-coral/90"
                 }`}
               >
                 ยืนยันส่งคำสั่ง

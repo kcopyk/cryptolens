@@ -8,9 +8,9 @@ interface IndicatorProps {
 }
 
 const signalStyle: Record<string, string> = {
-  bullish: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20",
-  bearish: "text-red-400 bg-red-400/10 border-red-400/20",
-  neutral: "text-zinc-400 bg-zinc-400/10 border-zinc-400/20",
+  bullish: "text-mint bg-mint/10 border-mint/20",
+  bearish: "text-coral bg-coral/10 border-coral/20",
+  neutral: "text-muted bg-muted/10 border-muted/20",
 };
 
 function rsiSignal(rsi: number): { tag: string; tone: keyof typeof signalStyle; hint: string } {
@@ -53,17 +53,17 @@ function IndicatorRow({
   hint: string;
 }) {
   return (
-    <li className="flex gap-3 items-start rounded-lg p-2 -mx-2 hover:bg-zinc-800/40 transition-colors">
+    <li className="flex gap-3 items-start rounded-lg p-2 -mx-2 hover:bg-ink/5 transition-colors">
       <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border shrink-0 mt-0.5 font-medium ${signalStyle[tone]}`}>
         {tag}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm text-zinc-200 leading-snug">
-          <span className="text-zinc-500">{title}</span>
+        <p className="text-sm text-ink leading-snug">
+          <span className="text-muted">{title}</span>
           {" · "}
-          <span className="font-semibold tabular-nums">{value}</span>
+          <span className="font-semibold font-mono tabular-nums">{value}</span>
         </p>
-        <p className="text-[10px] text-zinc-500 mt-1">{hint}</p>
+        <p className="text-[10px] text-muted mt-1">{hint}</p>
       </div>
     </li>
   );
@@ -118,15 +118,15 @@ interface NewsProps {
 }
 
 const sentimentStyle: Record<string, string> = {
-  bullish: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20",
-  bearish: "text-red-400 bg-red-400/10 border-red-400/20",
-  neutral: "text-zinc-400 bg-zinc-400/10 border-zinc-400/20",
+  bullish: "text-mint bg-mint/10 border-mint/20",
+  bearish: "text-coral bg-coral/10 border-coral/20",
+  neutral: "text-muted bg-muted/10 border-muted/20",
 };
 
 export function NewsList({ news, compact = false }: NewsProps) {
   if (news.length === 0) {
     return (
-      <div className="text-sm text-zinc-500 italic py-4 text-center">
+      <div className="text-sm text-muted italic py-4 text-center">
         ไม่มีข่าวในขณะนี้ — ลองรีเฟรชอีกครั้ง
       </div>
     );
@@ -140,16 +140,16 @@ export function NewsList({ news, compact = false }: NewsProps) {
             href={item.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex gap-3 items-start hover:bg-zinc-800/50 rounded-lg p-2 -mx-2 transition-colors"
+            className="flex gap-3 items-start hover:bg-ink/5 rounded-lg p-2 -mx-2 transition-colors"
           >
             <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${sentimentStyle[item.sentiment] ?? sentimentStyle.neutral}`}>
               {item.sentiment}
             </span>
             <div className="min-w-0">
-              <p className="text-[11px] text-zinc-200 group-hover:text-white leading-snug font-sans">
+              <p className="text-[11px] text-ink group-hover:text-mint leading-snug">
                 {item.title}
               </p>
-              <p className="text-[10px] text-zinc-500 mt-1">
+              <p className="text-[10px] text-muted mt-1">
                 {item.source}
                 {item.published_at && ` · ${formatNewsDateTime(item.published_at)}`}
               </p>

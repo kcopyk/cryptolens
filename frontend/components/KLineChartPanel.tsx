@@ -69,7 +69,7 @@ const DRAW_TOOLS = [
   },
 ];
 
-// Dark theme tuned to the app's zinc palette.
+// Dark theme tuned to the app's brand palette.
 const STYLES = {
   grid: {
     horizontal: { color: "#27272a" },
@@ -77,17 +77,17 @@ const STYLES = {
   },
   candle: {
     bar: {
-      upColor: "#34d399",
-      downColor: "#f87171",
-      noChangeColor: "#a1a1aa",
-      upBorderColor: "#34d399",
-      downBorderColor: "#f87171",
-      upWickColor: "#34d399",
-      downWickColor: "#f87171",
+      upColor: "#27e5b0",
+      downColor: "#ff6b6b",
+      noChangeColor: "#a7adb5",
+      upBorderColor: "#27e5b0",
+      downBorderColor: "#ff6b6b",
+      upWickColor: "#27e5b0",
+      downWickColor: "#ff6b6b",
     },
     priceMark: {
-      high: { color: "#a1a1aa" },
-      low: { color: "#a1a1aa" },
+      high: { color: "#a7adb5" },
+      low: { color: "#a7adb5" },
       last: {
         text: { color: "#fff" },
       },
@@ -96,14 +96,14 @@ const STYLES = {
       text: { color: "#d4d4d8" },
     },
   },
-  xAxis: { tickText: { color: "#71717a" }, axisLine: { color: "#3f3f46" } },
-  yAxis: { tickText: { color: "#71717a" }, axisLine: { color: "#3f3f46" } },
+  xAxis: { tickText: { color: "#a7adb5" }, axisLine: { color: "#3f3f46" } },
+  yAxis: { tickText: { color: "#a7adb5" }, axisLine: { color: "#3f3f46" } },
   crosshair: {
-    horizontal: { text: { backgroundColor: "#7c3aed" } },
-    vertical: { text: { backgroundColor: "#7c3aed" } },
+    horizontal: { text: { backgroundColor: "#27e5b0" } },
+    vertical: { text: { backgroundColor: "#27e5b0" } },
   },
   overlay: {
-    line: { color: "#a78bfa" },
+    line: { color: "#27e5b0" },
     text: { color: "#e4e4e7" },
   },
 };
@@ -330,7 +330,7 @@ export default function KLineChartPanel({ symbol, candles, interval, height = 42
   return (
     <div className="flex gap-2">
       {/* Left vertical tool tab bar (TradingView-style) */}
-      <div className="flex flex-col items-center gap-1 self-start py-1.5 px-1 rounded-xl bg-zinc-900/60 border border-zinc-800">
+      <div className="flex flex-col items-center gap-1 self-start py-1.5 px-1 rounded-xl bg-panel/60 border border-line">
         {DRAW_TOOLS.map((t) => (
           <button
             key={t.key}
@@ -339,8 +339,8 @@ export default function KLineChartPanel({ symbol, candles, interval, height = 42
             aria-label={t.label}
             className={`w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
               activeTool === t.key
-                ? "bg-violet-600 text-white"
-                : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                ? "bg-mint text-base"
+                : "text-muted hover:bg-ink/6 hover:text-ink"
             }`}
           >
             {t.icon}
@@ -353,7 +353,7 @@ export default function KLineChartPanel({ symbol, candles, interval, height = 42
           title="ลบทีละเส้น (คลิกที่เส้นเพื่อลบ)"
           aria-label="ลบทีละเส้น"
           className={`w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
-            deleteMode ? "bg-red-600 text-white" : "text-zinc-400 hover:bg-zinc-800 hover:text-red-400"
+            deleteMode ? "bg-coral text-base" : "text-muted hover:bg-ink/6 hover:text-coral"
           }`}
         >
           <svg className={ICON} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -361,13 +361,13 @@ export default function KLineChartPanel({ symbol, candles, interval, height = 42
           </svg>
         </button>
 
-        <div className="w-6 h-px bg-zinc-800 my-0.5" />
+        <div className="w-6 h-px bg-line my-0.5" />
 
         <button
           onClick={clearAll}
           title="ล้างเส้นทั้งหมด"
           aria-label="ล้างเส้นทั้งหมด"
-          className="w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-red-400 transition-colors"
+          className="w-9 h-9 flex items-center justify-center rounded-lg text-muted hover:bg-ink/6 hover:text-coral transition-colors"
         >
           <svg className={ICON} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 7h14M10 7V5h4v2M8 7l1 12h6l1-12" />
@@ -376,7 +376,7 @@ export default function KLineChartPanel({ symbol, candles, interval, height = 42
 
         <div
           title={savedAt ? "บันทึกเส้นอัตโนมัติแล้ว" : "วาดเส้นได้ · เซฟอัตโนมัติ"}
-          className={`w-9 h-9 flex items-center justify-center ${savedAt ? "text-emerald-400" : "text-zinc-600"}`}
+          className={`w-9 h-9 flex items-center justify-center ${savedAt ? "text-mint" : "text-muted"}`}
         >
           <svg className={ICON} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
             {savedAt ? (
@@ -392,7 +392,7 @@ export default function KLineChartPanel({ symbol, candles, interval, height = 42
       <div
         ref={containerRef}
         style={{ height }}
-        className="flex-1 min-w-0 rounded-xl overflow-hidden bg-zinc-900/40"
+        className="flex-1 min-w-0 rounded-xl overflow-hidden bg-panel/40"
       />
     </div>
   );

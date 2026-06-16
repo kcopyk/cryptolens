@@ -1,14 +1,47 @@
 @import "tailwindcss";
 
+@theme {
+  /* Surfaces & ink */
+  --color-base: #0b0e11;
+  --color-panel: #12161c;
+  --color-line: rgba(255, 255, 255, 0.07);
+  --color-ink: #f3f5f7;
+  --color-muted: #a7adb5;
+
+  /* Brand accents */
+  --color-mint: #27e5b0; /* primary accent — replaces violet */
+  --color-coral: #ff6b6b; /* down / breaking / error */
+
+  /* Direction (price change) — up = mint, down = coral, flat = muted.
+     Market direction MUST use only these three; never heat-* or warn. */
+
+  /* System warning — testnet / risk / notification badges. Amber so it stays
+     clearly distinct from coral (error/down) AND heat-hot (Heat intensity). */
+  --color-warn: #fbbf24; /* amber/gold */
+
+  /* Heat ramp — intensity, NOT buy/sell. RESERVED EXCLUSIVELY for the Heat bar
+     (pivot iron rule §1.5): heat-* must never appear outside HeatBar so it can
+     never be read as a trade signal or a generic warning. */
+  --color-heat-cold: #38bdf8; /* sky — calm / low */
+  --color-heat-mid: #a7adb5; /* neutral steel */
+  --color-heat-hot: #fb923c; /* orange — extreme (distinct from coral & warn) */
+
+  /* Type — Latin via Sora, Thai via IBM Plex Sans Thai, both from next/font.
+     The next/font variables are composed here so `font-sans` keeps the Thai
+     fallback even though next/font sets the var on <body>. */
+  --font-sans: var(--font-sora), var(--font-thai), system-ui, sans-serif;
+  --font-mono: var(--font-mono-jb), "JetBrains Mono", ui-monospace, monospace;
+}
+
 :root {
-  --background: #09090b;
-  --foreground: #fafafa;
+  --background: #0b0e11;
+  --foreground: #f3f5f7;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -36,6 +69,68 @@ body {
 
 .animate-fade-in-down {
   animation: fadeInDown 0.25s ease-out forwards;
+}
+
+/* ── Brand motion & glow utilities ───────────────────────────────────────── */
+
+/* Live status dot — pulsing mint ring (markets are live). */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(39, 229, 176, 0.5);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 6px rgba(39, 229, 176, 0);
+  }
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: #27e5b0;
+  animation: pulse-dot 2.4s ease-in-out infinite;
+}
+
+/* Scroll-reveal — toggle `.in` via an IntersectionObserver (never a scroll
+   listener). Collapses to instant under reduced-motion. */
+.reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition:
+    opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reveal.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Lift-on-hover card. */
+.glow-card {
+  position: relative;
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.glow-card:hover {
+  transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .glow-card {
+    transition: none;
+  }
+  .glow-card:hover {
+    transform: none;
+  }
 }
 
 /* Slim scrollbar for order book / trade tape / dropdowns */

@@ -80,17 +80,17 @@ export default function OrderBook({ symbol, lastPrice, onSelectPrice }: Props) {
       key={`${side}-${r.price}`}
       type="button"
       onClick={() => onSelectPrice?.(r.price)}
-      className="relative grid grid-cols-3 w-full px-3 py-[3px] text-right font-mono text-[11px] leading-tight hover:bg-zinc-800/40 transition-colors"
+      className="relative grid grid-cols-3 w-full px-3 py-[3px] text-right font-mono text-[11px] leading-tight hover:bg-ink/6 transition-colors"
     >
       <span
-        className={`absolute inset-y-0 right-0 ${side === "ask" ? "bg-red-500/10" : "bg-emerald-500/10"}`}
+        className={`absolute inset-y-0 right-0 ${side === "ask" ? "bg-coral/10" : "bg-mint/10"}`}
         style={{ width: `${r.depthPct}%` }}
       />
-      <span className={`relative z-10 text-left ${side === "ask" ? "text-red-400" : "text-emerald-400"}`}>
+      <span className={`relative z-10 text-left ${side === "ask" ? "text-coral" : "text-mint"}`}>
         {fmtPrice(r.price)}
       </span>
-      <span className="relative z-10 text-zinc-300">{fmtQty(r.qty)}</span>
-      <span className="relative z-10 text-zinc-500">{fmtQty(r.cumulative)}</span>
+      <span className="relative z-10 text-ink">{fmtQty(r.qty)}</span>
+      <span className="relative z-10 text-muted">{fmtQty(r.cumulative)}</span>
     </button>
   );
 
@@ -103,11 +103,11 @@ export default function OrderBook({ symbol, lastPrice, onSelectPrice }: Props) {
   return (
     <div className="flex flex-col h-full text-xs select-none">
       <div className="px-3 pt-3 pb-2 flex items-center justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-300">Order Book</span>
-        <span className="text-[10px] text-zinc-600 font-mono">{symbol}/USDT</span>
+        <span className="text-[11px] font-bold uppercase tracking-wider text-ink">Order Book</span>
+        <span className="text-[10px] text-muted font-mono">{symbol}/USDT</span>
       </div>
 
-      <div className="grid grid-cols-3 px-3 pb-1 text-right text-[10px] uppercase tracking-wide text-zinc-600">
+      <div className="grid grid-cols-3 px-3 pb-1 text-right text-[10px] uppercase tracking-wide text-muted">
         <span className="text-left">ราคา</span>
         <span>จำนวน</span>
         <span>รวม</span>
@@ -121,10 +121,10 @@ export default function OrderBook({ symbol, lastPrice, onSelectPrice }: Props) {
       </div>
 
       {/* Spread / last price */}
-      <div className="flex items-center justify-between px-3 py-2 my-0.5 border-y border-zinc-800 bg-zinc-900/40">
+      <div className="flex items-center justify-between px-3 py-2 my-0.5 border-y border-line bg-panel/40">
         <span
           className={`flex items-center gap-1.5 font-mono text-base font-bold tabular-nums ${
-            dir === "up" ? "text-emerald-400" : "text-red-400"
+            dir === "up" ? "text-mint" : "text-coral"
           }`}
         >
           {ready ? fmtPrice(lastPrice) : "—"}
@@ -138,8 +138,8 @@ export default function OrderBook({ symbol, lastPrice, onSelectPrice }: Props) {
             <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
           </svg>
         </span>
-        <span className="text-[10px] text-zinc-500 font-mono text-right">
-          <span className="text-zinc-600 mr-1">Spread</span>
+        <span className="text-[10px] text-muted font-mono text-right">
+          <span className="text-muted mr-1">Spread</span>
           {spread > 0 ? `${fmtPrice(spread)} (${spreadPct.toFixed(2)}%)` : "—"}
         </span>
       </div>
