@@ -31,9 +31,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="th" className="h-full">
       <body
-        className={`${sora.variable} ${mono.variable} ${thai.variable} min-h-full bg-base text-ink flex flex-col`}
+        className={`${sora.variable} ${mono.variable} ${thai.variable} min-h-full bg-base text-ink`}
       >
-        {children}
+        <div className="fx-grid" aria-hidden="true" />
+        <div className="fx-grain" aria-hidden="true" />
+        <div className="relative z-10 flex min-h-full flex-col">{children}</div>
       </body>
     </html>
   );

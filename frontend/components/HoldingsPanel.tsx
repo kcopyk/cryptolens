@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Coin,
   Holding,
@@ -17,6 +17,51 @@ interface Props {
   onChange: (next: Holding[]) => void;
 }
 
+type InputMode = "amount" | "usd" | "pct";
+
+const MODE_LABELS: Record<InputMode, string> = {
+  amount: "จำนวน",
+  usd: "USD",
+  pct: "%",
+};
+
+const MODE_PLACEHOLDERS: Record<InputMode, string> = {
+  amount: "0.5",
+  usd: "1000",
+  pct: "30",
+};
+
+function resolveCoinAmount(
+  sym: string,
+  raw: number,
+  mode: InputMode,
+  price: number,
+  holdings: Holding[],
+  priceBySymbol: Map<string, number>
+): { amount: number } | { error: string } {
+  if (mode === "amount") return { amount: raw };
+
+  if (price <= 0) {
+    return { error: "ยังไม่มีราคาเหรียญนี้ — ลองใหม่ในอีกสักครู่" };
+  }
+
+  if (mode === "usd") return { amount: raw / price };
+
+  if (raw >= 100) return { error: "ใส่ % น้อยกว่า 100" };
+
+  const otherTotal = holdings
+    .filter((h) => h.symbol !== sym)
+    .reduce((s, h) => s + h.amount * (priceBySymbol.get(h.symbol) ?? 0), 0);
+
+  if (otherTotal <= 0) {
+    return { error: "ใช้ % ได้เมื่อมีเหรียญอื่นในพอร์ตแล้ว — เหรียญแรกใส่เป็นจำนวนหรือ USD" };
+  }
+
+  const targetPct = raw / 100;
+  const targetUsd = (targetPct * otherTotal) / (1 - targetPct);
+  return { amount: targetUsd / price };
+}
+
 /**
  * Manual holdings (PLAN milestone 1). The user types what they hold — no API
  * key, no liability. This turns "the market" into "your money" and feeds the
@@ -24,7 +69,8 @@ interface Props {
  */
 export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) {
   const [symbol, setSymbol] = useState("");
-  const [amount, setAmount] = useState("");
+  const [value, setValue] = useState("");
+  const [inputMode, setInputMode] = useState<InputMode>("amount");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,24 +87,41 @@ export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) 
     const total = enriched.reduce((s, r) => s + r.value, 0);
     return {
       total,
-      items: enriched
-        .map((r) => ({ ...r, pct: total > 0 ? (r.value / total) * 100 : 0 }))
-        .sort((a, b) => b.value - a.value),
+      items: enriched.map((r) => ({
+        ...r,
+        pct: total > 0 ? (r.value / total) * 100 : 0,
+      })),
     };
   }, [holdings, priceBySymbol]);
 
+  const pctModeDisabled = useMemo(() => {
+    if (holdings.length === 0) return true;
+    const sym = symbol.trim().toUpperCase();
+    if (holdings.length === 1 && holdings[0]?.symbol === sym) return true;
+    return false;
+  }, [holdings, symbol]);
+
+  useEffect(() => {
+    if (inputMode === "pct" && pctModeDisabled) setInputMode("amount");
+  }, [inputMode, pctModeDisabled]);
+
   const handleAdd = async () => {
     const sym = symbol.trim().toUpperCase();
-    const amt = parseFloat(amount);
+    const raw = parseFloat(value);
     if (!sym) return setError("ใส่ชื่อเหรียญ เช่น BTC");
-    if (!Number.isFinite(amt) || amt <= 0) return setError("ใส่จำนวนที่มากกว่า 0");
+    if (!Number.isFinite(raw) || raw <= 0) return setError("ใส่ค่าที่มากกว่า 0");
+
+    const price = priceBySymbol.get(sym) ?? 0;
+    const resolved = resolveCoinAmount(sym, raw, inputMode, price, holdings, priceBySymbol);
+    if ("error" in resolved) return setError(resolved.error);
+
     setBusy(true);
     setError(null);
     try {
-      const next = await upsertHolding(sym, amt);
+      const next = await upsertHolding(sym, resolved.amount);
       onChange(next);
       setSymbol("");
-      setAmount("");
+      setValue("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "เพิ่มไม่สำเร็จ");
     } finally {
@@ -74,38 +137,14 @@ export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) 
     }
   };
 
-  const addForm = (
-    <div className="flex flex-col gap-2">
-      <div className="flex gap-2">
-        <input
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-          onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-          placeholder="เหรียญ (BTC)"
-          className="w-24 bg-base border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted outline-none focus:border-mint/40 uppercase"
-        />
-        <input
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-          placeholder="จำนวน (0.5)"
-          inputMode="decimal"
-          className="flex-1 min-w-0 bg-base border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted outline-none focus:border-mint/40 tabular-nums"
-        />
-        <button
-          onClick={handleAdd}
-          disabled={busy}
-          className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold bg-mint text-base hover:bg-mint/90 transition-colors disabled:opacity-50"
-        >
-          เพิ่ม
-        </button>
-      </div>
-      {error && <p className="text-xs text-coral">{error}</p>}
-    </div>
-  );
+  const handleModeChange = (mode: InputMode) => {
+    if (mode === "pct" && pctModeDisabled) return;
+    setInputMode(mode);
+    setError(null);
+  };
 
   return (
-    <section className="bg-panel/50 border border-line rounded-2xl p-5">
+    <section className="bg-panel/60 border border-line rounded-3xl p-5 sm:p-6">
       <div className="flex items-center justify-between gap-3 mb-4">
         <div>
           <h2 className="text-sm font-bold text-ink">พอร์ตของคุณ</h2>
@@ -123,24 +162,87 @@ export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) 
         )}
       </div>
 
-      {holdings.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 py-6 text-center">
-          <div className="w-12 h-12 rounded-2xl bg-mint/10 border border-mint/20 flex items-center justify-center">
-            <svg className="w-6 h-6 text-mint" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+              placeholder="เหรียญ (BTC)"
+              className="w-full sm:w-28 bg-base border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted outline-none focus:border-mint/40 uppercase"
+            />
+            <input
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+              placeholder={
+                inputMode === "amount"
+                  ? `จำนวน (${MODE_PLACEHOLDERS.amount})`
+                  : inputMode === "usd"
+                    ? `มูลค่า ($${MODE_PLACEHOLDERS.usd})`
+                    : `สัดส่วน (${MODE_PLACEHOLDERS.pct}%)`
+              }
+              inputMode="decimal"
+              className="flex-1 min-w-0 bg-base border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted outline-none focus:border-mint/40 tabular-nums"
+            />
+            <div className="flex rounded-lg border border-line overflow-hidden shrink-0">
+              {(Object.keys(MODE_LABELS) as InputMode[]).map((mode) => {
+                const disabled = mode === "pct" && pctModeDisabled;
+                const active = inputMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => handleModeChange(mode)}
+                    className={`px-2.5 py-2 text-[11px] font-medium transition-colors ${
+                      active
+                        ? "bg-mint/15 text-mint"
+                        : disabled
+                          ? "bg-base text-muted/40 cursor-not-allowed"
+                          : "bg-base text-muted hover:text-ink"
+                    }`}
+                    title={
+                      disabled
+                        ? "ใช้ % ได้เมื่อมีเหรียญอื่นในพอร์ตแล้ว"
+                        : undefined
+                    }
+                  >
+                    {MODE_LABELS[mode]}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={handleAdd}
+              disabled={busy}
+              className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold bg-mint text-base hover:bg-mint/90 transition-colors disabled:opacity-50"
+            >
+              เพิ่ม
+            </button>
           </div>
-          <p className="text-sm text-ink font-medium">ยังไม่มีเหรียญในพอร์ต</p>
-          <p className="text-xs text-muted max-w-xs">
-            เพิ่มเหรียญแรกที่คุณถืออยู่ แล้วเราจะถ่วงน้ำหนักสรุปรายวันให้ตรงกับพอร์ตจริง
-          </p>
-          <div className="w-full max-w-sm mt-1">{addForm}</div>
+          {error && <p className="text-xs text-coral">{error}</p>}
         </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          <ul className="flex flex-col divide-y divide-line">
+
+        {holdings.length === 0 ? (
+          <div className="flex items-center gap-3 py-4 px-1 border border-dashed border-line rounded-2xl">
+            <div className="w-10 h-10 rounded-xl bg-mint/10 border border-mint/20 flex items-center justify-center shrink-0">
+              <svg className="w-5 h-5 text-mint" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+            </div>
+            <div className="text-left min-w-0">
+              <p className="text-sm text-ink font-medium">ยังไม่มีเหรียญในพอร์ต</p>
+              <p className="text-xs text-muted mt-0.5">
+                เพิ่มเหรียญด้านบน — ใส่ได้ทั้งจำนวนเหรียญ มูลค่า USD หรือ % ของพอร์ต
+              </p>
+            </div>
+          </div>
+        ) : (
+          <ul className="flex flex-col divide-y divide-line border border-line rounded-2xl overflow-hidden">
             {rows.items.map((r) => (
-              <li key={r.symbol} className="py-2.5 flex items-center gap-3">
+              <li key={r.symbol} className="py-2.5 px-3 flex items-center gap-3 bg-base/30">
                 <CoinIcon asset={r.symbol} size="sm" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -178,9 +280,8 @@ export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) 
               </li>
             ))}
           </ul>
-          <div className="border-t border-line pt-3">{addForm}</div>
-        </div>
-      )}
+        )}
+      </div>
     </section>
   );
 }

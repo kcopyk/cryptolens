@@ -10,6 +10,12 @@ export const PAIRS: Record<string, string> = {
 
 export const DEFAULT_SYMBOLS = ["BTC", "ETH", "BNB", "SOL"];
 
+/** Top coins by market cap — price scroll ticker (fixed set, repeated to fill width). */
+export const TICKER_SYMBOLS = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA"] as const;
+
+/** @deprecated use TICKER_SYMBOLS — kept for any legacy imports */
+export const TOP_MARKET_CAP_SYMBOLS = [...TICKER_SYMBOLS, "DOGE", "DOT"];
+
 const REST = "https://api.binance.com";
 const WS = "wss://stream.binance.com:9443";
 

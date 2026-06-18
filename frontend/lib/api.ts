@@ -224,7 +224,15 @@ export async function reorderWatchlist(symbols: string[]): Promise<string[]> {
 
 // ─── Daily AI digest ──────────────────────────────────────────────────
 
+export type VerdictLevel = "normal" | "mild" | "abnormal";
+export type MarketDirection = "down" | "up" | "mixed" | "flat";
+
 export interface DigestBody {
+  verdict?: string;
+  narrative?: string;
+  mood?: string;
+  verdict_level?: VerdictLevel;
+  market_direction?: MarketDirection;
   overview: string;
   per_coin: Record<string, string>;
   disclaimer: string;
@@ -240,19 +248,112 @@ export interface DigestCoin {
   deviation?: Deviation | null;
 }
 
+/** Aggregate 24h direction from digest coin rows. */
+export function inferMarketDirection(coins: DigestCoin[]): MarketDirection {
+  if (!coins.length) return "flat";
+  const TH = 0.05;
+  let down = 0;
+  let up = 0;
+  for (const c of coins) {
+    if (c.change_24h_pct < -TH) down++;
+    else if (c.change_24h_pct > TH) up++;
+  }
+  const n = coins.length;
+  if (down === n) return "down";
+  if (up === n) return "up";
+  if (down >= n * 0.75) return "down";
+  if (up >= n * 0.75) return "up";
+  if (down === 0 && up === 0) return "flat";
+  return "mixed";
+}
+
+/** Client-side fallback when cached digest lacks a structured verdict. */
+export function inferVerdictFromCoins(
+  coins: DigestCoin[],
+  weighted?: boolean
+): { verdict: string; level: VerdictLevel; direction: MarketDirection; narrative: string } {
+  const abnormal = coins.filter((c) => c.deviation?.status === "abnormal");
+  const mild = coins.filter((c) => c.deviation?.status === "mild");
+  const scope = weighted ? "พอร์ตคุณ" : "ตลาดวันนี้";
+  const direction = inferMarketDirection(coins);
+
+  if (abnormal.length) {
+    const syms = abnormal
+      .map((c) => c.symbol)
+      .slice(0, 3)
+      .join(", ");
+    const prefix = weighted ? "พอร์ตคุณมี" : "มี";
+    return {
+      verdict: `${prefix} ${abnormal.length} เหรียญผิดปกติ — ${syms}`,
+      level: "abnormal",
+      direction,
+      narrative: "",
+    };
+  }
+  if (mild.length) {
+    const syms = mild
+      .map((c) => c.symbol)
+      .slice(0, 3)
+      .join(", ");
+    const prefix = weighted ? "พอร์ตคุณมี" : "มี";
+    return {
+      verdict: `${prefix} ${mild.length} เหรียญเริ่มผิดปกติ — ${syms}`,
+      level: "mild",
+      direction,
+      narrative: "",
+    };
+  }
+
+  const avg24h = coins.reduce((s, c) => s + c.change_24h_pct, 0) / coins.length;
+  let verdict: string;
+  if (direction === "down") {
+    verdict = `${scope}ลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง`;
+  } else if (direction === "up") {
+    verdict = `${scope}ขึ้นและยังอยู่ในกรอบปกติ — ไม่ต้องห่วง`;
+  } else if (direction === "mixed") {
+    verdict = `${scope}ผสม — ยังอยู่ในกรอบปกติ`;
+  } else {
+    verdict = `${scope}ปกติ — ไม่ต้องห่วง`;
+  }
+
+  let narrative: string;
+  if (direction === "down") {
+    narrative = `ทุกเหรียญลงเฉลี่ย ${avg24h.toFixed(1)}% (24h) แต่ยังอยู่ในกรอบปกติ 30 วัน — ไม่ใช่การขยับผิดปกติ`;
+  } else if (direction === "up") {
+    narrative = `เหรียญหลักขึ้นเฉลี่ย ${avg24h >= 0 ? "+" : ""}${avg24h.toFixed(1)}% (24h) และยังอยู่ในกรอบปกติ 30 วัน`;
+  } else {
+    narrative = `${coins.map((c) => c.symbol).join(", ")} ยังเคลื่อนไหวอยู่ในกรอบปกติ 30 วัน`;
+  }
+
+  return { verdict, level: "normal", direction, narrative };
+}
+
 export interface DigestResponse {
   as_of: string;
   day: string;
+  bucket?: string;
   symbols: string[];
   weighted?: boolean;
   digest: DigestBody;
   coins: DigestCoin[];
   cached: boolean;
+  shared?: boolean;
+  force_remaining?: number;
 }
 
-export async function fetchDigest(): Promise<DigestResponse> {
-  const r = await fetch(`${API}/api/digest`, { cache: "no-store", headers: getHeaders() });
-  if (!r.ok) throw new Error(`digest ${r.status}`);
+export async function fetchDigest(force = false): Promise<DigestResponse> {
+  const url = force ? `${API}/api/digest?force=1` : `${API}/api/digest`;
+  const r = await fetch(url, { cache: "no-store", headers: getHeaders() });
+  if (!r.ok) {
+    let detail = `digest ${r.status}`;
+    try {
+      const body = await r.json();
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
   return r.json();
 }
 

@@ -6,30 +6,27 @@ import {
   CoinHeat,
   Holding,
   InsightsResponse,
-  MoodResponse,
   fetchInsights,
-  fetchMood,
   fetchWatchlist,
   fetchHoldings,
   fetchHeat,
 } from "@/lib/api";
 import { useBinanceLive } from "@/hooks/useBinanceLive";
-import MoodBar from "@/components/MoodBar";
+import PriceScrollTicker from "@/components/PriceScrollTicker";
 import CoinFactCard, { CoinFactCardSkeleton } from "@/components/CoinFactCard";
 import HoldingsPanel from "@/components/HoldingsPanel";
 import DailyDigest from "@/components/DailyDigest";
 import ChartPanel from "@/components/ChartPanel";
 import ChatPanel from "@/components/ChatPanel";
 import AppHeader from "@/components/AppHeader";
+import AppNav from "@/components/AppNav";
 import SettingsModal from "@/components/SettingsModal";
 import MarketTicker from "@/components/MarketTicker";
+import RevealSection from "@/components/RevealSection";
 
 const DEFAULT_SYMBOLS = ["BTC", "ETH", "BNB", "SOL"];
 
 export default function Dashboard() {
-  const [mood, setMood] = useState<MoodResponse | null>(null);
-  const [moodLoading, setMoodLoading] = useState(true);
-
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [backendInsights, setBackendInsights] = useState<InsightsResponse | null>(null);
@@ -43,8 +40,6 @@ export default function Dashboard() {
   const [googleUser, setGoogleUser] = useState<{ name: string; email: string; avatar: string } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // The coins we focus on = the user's holdings (their money). Fall back to the
-  // watchlist / defaults so the page is never empty before they enter any.
   const heldSymbols = holdings.map((h) => h.symbol);
   const displaySymbols = heldSymbols.length
     ? heldSymbols
@@ -77,7 +72,6 @@ export default function Dashboard() {
     [holdings]
   );
 
-  // ─── Account auth sync ──────────────────────────────────────────────
   useEffect(() => {
     const handleAuthChange = () => {
       const saved = localStorage.getItem("cryptolens_google_user");
@@ -96,25 +90,16 @@ export default function Dashboard() {
     return () => window.removeEventListener("cryptolens_auth_changed", handleAuthChange);
   }, []);
 
-  // ─── Bootstrap: holdings + watchlist + mood ─────────────────────────
   const loadBase = useCallback(async () => {
-    setMoodLoading(true);
-    const [hold, wl, m] = await Promise.allSettled([
-      fetchHoldings(),
-      fetchWatchlist(),
-      fetchMood(),
-    ]);
+    const [hold, wl] = await Promise.allSettled([fetchHoldings(), fetchWatchlist()]);
     if (hold.status === "fulfilled") setHoldings(hold.value);
     if (wl.status === "fulfilled") setWatchlist(wl.value);
-    if (m.status === "fulfilled") setMood(m.value);
-    setMoodLoading(false);
   }, []);
 
   useEffect(() => {
     loadBase();
   }, [loadBase]);
 
-  // ─── Insights + Heat follow the focused symbols ─────────────────────
   useEffect(() => {
     let cancelled = false;
     setInsightsLoading(true);
@@ -133,7 +118,6 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayKey]);
 
-  // Keep the selected chart coin synced with live prices.
   useEffect(() => {
     if (!chartCoin || !liveCoins.length) return;
     const updated = liveCoins.find((c) => c.symbol === chartCoin.symbol);
@@ -148,7 +132,11 @@ export default function Dashboard() {
     }, 60);
   };
 
-  // Order the fact-card grid: held coins first (heaviest order), then the rest.
+  const handleHoldingsChange = useCallback((next: Holding[]) => {
+    setHoldings(next);
+    setChartOpen(false);
+  }, []);
+
   const orderedCoins = useMemo(() => {
     if (!holdings.length) return liveCoins;
     const idx = new Map(heldSymbols.map((s, i) => [s, i]));
@@ -174,27 +162,31 @@ export default function Dashboard() {
         onSettingsClick={() => setIsSettingsOpen(true)}
         onRefresh={refresh}
       />
+      <AppNav />
 
-      <MoodBar mood={mood} loading={moodLoading} />
+      <PriceScrollTicker />
 
-      <main className="flex-1 p-4 sm:p-6 max-w-5xl mx-auto w-full flex flex-col gap-6">
-        {/* HERO — the one question: "วันนี้ต้องสนใจอะไรไหม" */}
-        <DailyDigest refreshKey={displayKey} heat={heat} />
+      <main className="flex-1 w-full max-w-[1240px] mx-auto px-4 sm:px-6 py-6 sm:py-8 flex flex-col gap-8 sm:gap-10">
+        <RevealSection>
+          <DailyDigest refreshKey={displayKey} heat={heat} />
+        </RevealSection>
 
-        {/* Your portfolio (manual holdings) */}
-        <HoldingsPanel holdings={holdings} liveCoins={liveCoins} onChange={setHoldings} />
+        <RevealSection>
+          <HoldingsPanel holdings={holdings} liveCoins={liveCoins} onChange={handleHoldingsChange} />
+        </RevealSection>
 
-        {/* Your coins — status + why, at a glance */}
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-bold text-ink">
-              {holdings.length ? "เหรียญในพอร์ตของคุณ" : "เหรียญยอดนิยม"}
-            </h2>
-            <span className="text-[11px] text-muted">
-              Heat = ระดับความร้อน (ไม่ใช่ควรซื้อ/ขาย)
-            </span>
+        <RevealSection as="section">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-5">
+            <div>
+              <h2 className="text-xl font-bold text-ink tracking-tight">
+                {holdings.length ? "เหรียญในพอร์ตของคุณ" : "เหรียญยอดนิยม"}
+              </h2>
+              <p className="text-[13px] text-muted mt-1">
+                สถานะ + ข่าว + ข้อเท็จจริง · Heat คือระดับความร้อน ไม่ใช่คำแนะนำซื้อ/ขาย
+              </p>
+            </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
             {gridLoading
               ? Array.from({ length: 3 }).map((_, i) => <CoinFactCardSkeleton key={i} />)
               : orderedCoins.map((coin) => (
@@ -202,6 +194,7 @@ export default function Dashboard() {
                     key={coin.symbol}
                     coin={coin}
                     heat={heat[coin.symbol]}
+                    stale={backendInsights?.stale ?? false}
                     amount={amountBySymbol.get(coin.symbol)}
                     weightPct={weightBySymbol.get(coin.symbol)}
                     selected={chartCoin?.symbol === coin.symbol && chartOpen}
@@ -216,17 +209,17 @@ export default function Dashboard() {
               <p className="text-sm">ไม่สามารถโหลดข้อมูลได้</p>
               <button
                 onClick={refresh}
-                className="mt-4 text-xs border border-line px-4 py-2 rounded-lg hover:border-mint/40 transition-colors"
+                className="mt-4 text-xs border border-line px-4 py-2 rounded-xl hover:border-mint/40 transition-colors"
               >
                 ลองใหม่
               </button>
             </div>
           )}
-        </section>
+        </RevealSection>
 
-        {/* Chart — opt-in only; it never steals attention on load */}
         {chartOpen && chartCoin && (
-          <section id="chart-section" className="flex flex-col gap-4">
+          <RevealSection as="section" className="flex flex-col gap-4">
+            <div id="chart-section" className="flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-bold text-ink">กราฟ {chartCoin.symbol}</h2>
               <button
@@ -241,7 +234,8 @@ export default function Dashboard() {
             </div>
             <MarketTicker coin={chartCoin} allCoins={liveCoins} onSelectCoin={setChartCoin} />
             <ChartPanel coin={chartCoin} onAsk={setActiveCoin} />
-          </section>
+            </div>
+          </RevealSection>
         )}
       </main>
 
@@ -249,11 +243,10 @@ export default function Dashboard() {
         ราคา real-time จาก Binance · ข่าว/AI จาก backend · Heat คำนวณจากสูตร ไม่ใช่คำแนะนำการลงทุน
       </footer>
 
-      {/* Floating Ask AI FAB */}
       {!gridLoading && liveCoins.length > 0 && (
         <button
           onClick={() => setActiveCoin(chartCoin || liveCoins[0])}
-          className="fixed bottom-6 right-6 z-40 flex items-center gap-2.5 bg-mint text-base font-bold text-xs px-4.5 py-3.5 rounded-full shadow-[0_30px_80px_-40px_rgba(39,229,176,0.45)] transition-all hover:scale-105 active:scale-95 duration-200 cursor-pointer"
+          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 bg-mint text-base font-bold text-xs px-5 py-3.5 rounded-full shadow-[0_24px_64px_-32px_rgba(39,229,176,0.55)] transition-transform hover:scale-[1.03] active:scale-[0.97] duration-200 cursor-pointer"
         >
           <svg className="w-4.5 h-4.5 text-base" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3 15l5.096-.813L9 9l.813 5.096L15 15l-5.187.904zM18 5.25L17.25 7.5L15 8.25l2.25.75L18 11.25l.75-2.25L21 8.25l-2.25-.75L18 5.25z" />
@@ -262,7 +255,12 @@ export default function Dashboard() {
         </button>
       )}
 
-      <ChatPanel coin={activeCoin} onClose={() => setActiveCoin(null)} />
+      <ChatPanel
+        coin={activeCoin}
+        allCoins={liveCoins}
+        onSelectCoin={setActiveCoin}
+        onClose={() => setActiveCoin(null)}
+      />
 
       <SettingsModal
         isOpen={isSettingsOpen}

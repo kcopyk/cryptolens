@@ -7,6 +7,7 @@ from typing import Optional, Any
 
 import cache
 import metrics
+import rate_limit
 import binance as bnb
 import indicators as ind
 import news as news_api
@@ -37,6 +38,11 @@ def today_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def digest_bucket() -> str:
+    """UTC hour bucket for digest cache — one fresh LLM digest per user per hour."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
+
+
 async def fetch_coin(symbol: str) -> dict:
     closes, ticker, news = await asyncio.gather(
         bnb.get_klines(symbol, limit=100),
@@ -53,9 +59,13 @@ async def fetch_coin(symbol: str) -> dict:
         "sparkline": ind.sparkline(closes),
         "indicators": indicators,
         "news": news,
+        # The per-coin LLM summary is NOT shown in the fact-card UI (which uses
+        # deterministic Heat/deviation/facts) — it's only used as extra context
+        # in /api/ask. Generating it eagerly here fired one AI call PER coin on
+        # every load, instantly blowing the free-tier 5 RPM limit. Leave it empty
+        # and let /api/ask fill it on demand.
         "summary": "",
     }
-    coin["summary"] = ai.summarize_coin(coin)
     return coin
 
 
@@ -200,6 +210,12 @@ async def ask(body: AskBody):
     if not snapshot:
         raise HTTPException(status_code=404, detail=f"No snapshot for {symbol}. Load insights first.")
     try:
+        # Summaries are generated lazily (not on every insights load) to stay
+        # under the free-tier RPM limit. Build it on the first question, then
+        # cache it back onto the snapshot so later questions reuse it.
+        if not snapshot.get("summary"):
+            snapshot["summary"] = ai.summarize_coin(snapshot)
+            cache.set(f"snapshot:{symbol}", snapshot)
         answer = ai.ask_coin(snapshot, body.question)
         return {"answer": answer, "as_of": snapshot.get("as_of", now_iso())}
     except Exception as e:
@@ -355,21 +371,41 @@ def delete_holding(symbol: str, x_user_id: Optional[str] = Header(None)):
 
 
 @app.get("/api/digest")
-async def digest(x_user_id: Optional[str] = Header(None)):
+async def digest(
+    force: bool = Query(default=False),
+    x_user_id: Optional[str] = Header(None),
+):
     user = _require_user(x_user_id)
-    # Portfolio-weighted: prefer the user's real holdings (their money), fall
-    # back to the watchlist when they haven't entered any yet (PLAN milestone 4).
     holdings = db.get_holdings(user)
     holding_amounts = {h["symbol"]: h["amount"] for h in holdings}
     if holdings:
         symbols = [h["symbol"] for h in holdings][: db.WATCHLIST_MAX]
     else:
         symbols = db.get_watchlist(user)[: db.WATCHLIST_MAX]
-    day = today_utc()
+    bucket = digest_bucket()
+    weighted = bool(holdings)
+    shared_key = db.digest_shared_key(bucket, symbols)
 
-    cached = db.get_digest_cache(user, day)
+    if force:
+        if not db.can_force_refresh(user, bucket):
+            raise HTTPException(
+                status_code=429,
+                detail=f"รีเฟรชบังคับได้สูงสุด {db.DIGEST_FORCE_MAX} ครั้งต่อชั่วโมง",
+            )
+
+    cached = None
+    if not force:
+        if weighted:
+            cached = db.get_digest_cache(user, bucket)
+        else:
+            cached = db.get_shared_digest_cache(shared_key)
     if cached:
-        return {**cached, "cached": True}
+        return {
+            **cached,
+            "cached": True,
+            "shared": not weighted,
+            "force_remaining": db.force_refresh_remaining(user, bucket),
+        }
 
     try:
         coins = []
@@ -414,7 +450,8 @@ async def digest(x_user_id: Optional[str] = Header(None)):
         result = ai.daily_digest(coins)
         payload = {
             "as_of": now_iso(),
-            "day": day,
+            "day": today_utc(),
+            "bucket": bucket,
             "symbols": [c["symbol"] for c in coins],
             "weighted": total_value > 0,
             "digest": result,
@@ -431,8 +468,18 @@ async def digest(x_user_id: Optional[str] = Header(None)):
                 for c in coins
             ],
         }
-        db.set_digest_cache(user, day, payload)
-        return {**payload, "cached": False}
+        if total_value > 0:
+            db.set_digest_cache(user, bucket, payload)
+        else:
+            db.set_shared_digest_cache(shared_key, payload)
+        if force:
+            db.record_force_refresh(user, bucket)
+        return {
+            **payload,
+            "cached": False,
+            "shared": total_value == 0,
+            "force_remaining": db.force_refresh_remaining(user, bucket),
+        }
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 

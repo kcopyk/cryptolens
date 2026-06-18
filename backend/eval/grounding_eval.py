@@ -142,7 +142,9 @@ def _eval_summary(text: str, coin: dict, label: str) -> Result:
 
 def _eval_digest(digest: dict, coins: list[dict], label: str) -> Result:
     r = Result(label)
-    blob = (digest.get("overview", "") + " " +
+    blob = (digest.get("verdict", "") + " " +
+            digest.get("narrative", "") + " " +
+            digest.get("overview", "") + " " +
             " ".join(digest.get("per_coin", {}).values()))
     # The digest mixes coins, so audit each number against the union of all coins'
     # allowed values (synthetic coin carrying every value via the indicators bag).
@@ -253,7 +255,8 @@ def main():
 
     # In mock mode, make `import ai` succeed even with no keys configured.
     if not args.live and not any(os.environ.get(k) for k in
-                                 ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GROQ_API_KEY", "GROQ_API_KEY_2")):
+                                 ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3",
+                                  "GROQ_API_KEY", "GROQ_API_KEY_2")):
         os.environ["GEMINI_API_KEY"] = "mock-key-not-used"
 
     ok = run_live() if args.live else run_mock()

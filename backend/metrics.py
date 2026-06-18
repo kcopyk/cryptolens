@@ -18,9 +18,12 @@ from typing import Optional
 # Paid-tier reference pricing (USD per 1M tokens) — for "cost at scale" math only.
 # Free tier = $0 today; these let us project spend if/when we outgrow it.
 PRICING = {
-    # Gemini 2.0 Flash
-    "gemini": {"in": 0.10, "out": 0.40},
+    # Gemini 2.5 Flash (primary)
+    "gemini": {"in": 0.15, "out": 0.60},
+    # Gemini 2.5 Flash-Lite (cheap backup)
     "gemini2": {"in": 0.10, "out": 0.40},
+    # Gemini 3.1 Flash-Lite (quality backup)
+    "gemini3": {"in": 0.25, "out": 1.50},
     # Groq Llama-3.3-70b-versatile
     "groq": {"in": 0.59, "out": 0.79},
     "groq2": {"in": 0.59, "out": 0.79},
@@ -34,6 +37,8 @@ _samples: deque[dict] = deque(maxlen=_MAX_SAMPLES)
 def estimate_cost_usd(provider: str, prompt_tokens: int, completion_tokens: int) -> float:
     """Project paid-tier cost for one call. Returns USD (tiny, but real at scale)."""
     rate = PRICING.get(provider)
+    if not rate and provider.startswith("gemini_acc"):
+        rate = PRICING.get("gemini")
     if not rate:
         return 0.0
     return round(

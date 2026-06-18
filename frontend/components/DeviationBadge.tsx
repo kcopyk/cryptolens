@@ -7,16 +7,16 @@ interface Props {
   dev: Deviation;
 }
 
-/** Status → palette (reuses Heat tokens for consistency). normal = calm. */
+/** Deviation palette — not heat-* (reserved for HeatBar only). */
 function statusColor(status: DeviationStatus): string {
-  if (status === "abnormal") return "var(--color-heat-hot)";
-  if (status === "mild") return "var(--color-heat-mid)";
-  return "var(--color-heat-cold)";
+  if (status === "abnormal") return "var(--color-coral)";
+  if (status === "mild") return "var(--color-warn)";
+  return "var(--color-muted)";
 }
 function statusTextClass(status: DeviationStatus): string {
-  if (status === "abnormal") return "text-heat-hot";
-  if (status === "mild") return "text-heat-mid";
-  return "text-heat-cold";
+  if (status === "abnormal") return "text-coral";
+  if (status === "mild") return "text-warn";
+  return "text-muted";
 }
 
 function fmtPct(v: number | null): string {

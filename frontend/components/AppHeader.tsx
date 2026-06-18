@@ -19,11 +19,10 @@ export default function AppHeader({
   onRefresh,
 }: AppHeaderProps) {
   return (
-    <header className="sticky top-0 z-50 px-6 py-3 border-b border-line flex items-center justify-between bg-base/80 backdrop-blur-md">
+    <header className="sticky top-0 z-50 px-4 sm:px-6 h-[68px] border-b border-line flex items-center justify-between bg-base/80 backdrop-blur-md">
       <div className="flex items-center gap-2">
-        <Link href="/" className="flex items-center gap-2 font-bold tracking-tight text-ink hover:text-mint transition-colors">
-          <Logo className="w-6 h-6" />
-          <span className="text-base">CryptoLens</span>
+        <Link href="/" className="hover:opacity-90 transition-opacity">
+          <Logo wordmark iconClassName="w-6 h-6" textClassName="text-base font-bold tracking-tight" />
         </Link>
         {marketReady && (
           <span className="flex items-center gap-1.5 text-[10px] text-mint ml-1">

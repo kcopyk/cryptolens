@@ -5,18 +5,29 @@ from typing import Callable
 from dotenv import load_dotenv
 
 import metrics
+import rate_limit
 
 load_dotenv()
 
 # Adapters return (text, prompt_tokens, completion_tokens) so complete() can
 # record real token usage for cost/latency awareness (Week 2).
 Adapter = Callable[[str, int], tuple[str, int, int]]
+# Chain entry: (provider label, adapter, model id for logs)
+ChainEntry = tuple[str, Adapter, str]
 
 log = logging.getLogger("ai")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 
-GEMINI_MODEL = "gemini-2.0-flash"
 GROQ_MODEL = "llama-3.3-70b-versatile"
+
+# Model fallback on each distinct Gemini key (best → cheap → 3.x lite).
+# Override defaults via GEMINI_MODEL / GEMINI2_MODEL / GEMINI3_MODEL.
+_GEMINI_MODEL_CHAIN: list[tuple[str, str, str]] = [
+    ("gemini", "gemini-2.5-flash", "GEMINI_MODEL"),
+    ("gemini2", "gemini-2.5-flash-lite", "GEMINI2_MODEL"),
+    ("gemini3", "gemini-3.1-flash-lite", "GEMINI3_MODEL"),
+]
+_GEMINI_KEY_ENVS = ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3")
 
 
 class QuotaError(Exception):
@@ -29,16 +40,75 @@ def _is_quota_error(e: Exception) -> bool:
                                   "unauthenticated", "invalid api key", "permission_denied"))
 
 
-def _make_gemini_adapter(api_key: str, label: str) -> Adapter:
+def _quota_reason(e: Exception) -> str:
+    """Human-readable reason for logs when falling back to the next provider."""
+    msg = str(e).lower()
+    if "empty response" in msg:
+        return "empty response"
+    if "unauthenticated" in msg or "invalid api key" in msg:
+        return "invalid API key / auth"
+    if "permission_denied" in msg or "permission denied" in msg:
+        return "permission denied"
+    if "429" in msg or "resource_exhausted" in msg or "rate limit" in msg or "rate_limit" in msg:
+        if any(s in msg for s in ("per day", "daily", "rpd", "requests per day")):
+            return "daily quota (RPD)"
+        if any(s in msg for s in ("per minute", "rpm", "requests per minute")):
+            return "rate limit (RPM)"
+        if "token" in msg and "minute" in msg:
+            return "token rate limit (TPM)"
+        return "quota / rate limit (429)"
+    if "quota" in msg:
+        return "quota exceeded"
+    # Strip provider prefix like "gemini: ..." for readability.
+    text = str(e).split(": ", 1)[-1]
+    return text[:160] if len(text) > 160 else text
+
+
+def _provider_display(label: str, model: str) -> str:
+    return f"{label} ({model})"
+
+
+def _collect_gemini_keys() -> list[str]:
+    """Distinct keys in env order. Same key in multiple vars is deduped once."""
+    seen: set[str] = set()
+    keys: list[str] = []
+    for env_key in _GEMINI_KEY_ENVS:
+        if k := os.environ.get(env_key):
+            if k not in seen:
+                seen.add(k)
+                keys.append(k)
+    return keys
+
+
+def _resolve_gemini_model(default: str, model_env: str) -> str:
+    return os.environ.get(model_env, default)
+
+
+def _gemini_generation_config(model: str, max_tokens: int) -> dict:
+    config: dict = {
+        "max_output_tokens": max_tokens,
+        "temperature": 0.4,
+    }
+    if model.startswith("gemini-3"):
+        # Gemini 3 uses thinking_level; minimal = fastest/cheapest for short summaries.
+        config["thinking_config"] = {"thinking_level": "minimal"}
+    else:
+        # gemini-2.5-* enables thinking by default, which eats the output budget
+        # and truncates the visible answer. Disable for these grounded summaries.
+        config["thinking_config"] = {"thinking_budget": 0}
+    return config
+
+
+def _make_gemini_adapter(api_key: str, label: str, model: str) -> Adapter:
     from google import genai
     client = genai.Client(api_key=api_key)
 
     def call(prompt: str, max_tokens: int) -> tuple[str, int, int]:
         try:
             resp = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=model,
                 contents=prompt,
-                config={"max_output_tokens": max_tokens, "temperature": 0.4},
+                config=_gemini_generation_config(model, max_tokens),
             )
             text = (resp.text or "").strip()
             if not text:
@@ -46,7 +116,7 @@ def _make_gemini_adapter(api_key: str, label: str) -> Adapter:
             usage = getattr(resp, "usage_metadata", None)
             prompt_tok = getattr(usage, "prompt_token_count", 0) or 0
             completion_tok = getattr(usage, "candidates_token_count", 0) or 0
-            log.info(f"served by {label}")
+            log.info(f"served by {label} ({model})")
             return text, prompt_tok, completion_tok
         except Exception as e:
             if _is_quota_error(e):
@@ -74,7 +144,7 @@ def _make_groq_adapter(api_key: str, label: str = "groq") -> Adapter:
             usage = getattr(resp, "usage", None)
             prompt_tok = getattr(usage, "prompt_tokens", 0) or 0
             completion_tok = getattr(usage, "completion_tokens", 0) or 0
-            log.info(f"served by {label}")
+            log.info(f"served by {label} ({GROQ_MODEL})")
             return text, prompt_tok, completion_tok
         except Exception as e:
             if _is_quota_error(e):
@@ -84,28 +154,36 @@ def _make_groq_adapter(api_key: str, label: str = "groq") -> Adapter:
     return call
 
 
-def _build_chain() -> list[tuple[str, Adapter]]:
-    chain: list[tuple[str, Adapter]] = []
-    if k := os.environ.get("GEMINI_API_KEY"):
-        chain.append(("gemini", _make_gemini_adapter(k, "gemini")))
-    if k := os.environ.get("GEMINI_API_KEY_2"):
-        chain.append(("gemini2", _make_gemini_adapter(k, "gemini2")))
+def _build_chain() -> list[ChainEntry]:
+    chain: list[ChainEntry] = []
+    gemini_keys = _collect_gemini_keys()
+    if gemini_keys:
+        # Primary key: try all models in order (same API key is fine).
+        for label, default_model, model_env in _GEMINI_MODEL_CHAIN:
+            model = _resolve_gemini_model(default_model, model_env)
+            chain.append((label, _make_gemini_adapter(gemini_keys[0], label, model), model))
+        # Extra keys from other Google accounts = more quota on the primary model.
+        primary_model = _resolve_gemini_model("gemini-2.5-flash", "GEMINI_MODEL")
+        for i, api_key in enumerate(gemini_keys[1:], start=2):
+            label = f"gemini_acc{i}"
+            chain.append((label, _make_gemini_adapter(api_key, label, primary_model), primary_model))
     if k := os.environ.get("GROQ_API_KEY"):
-        chain.append(("groq", _make_groq_adapter(k, "groq")))
+        chain.append(("groq", _make_groq_adapter(k, "groq"), GROQ_MODEL))
     if k := os.environ.get("GROQ_API_KEY_2"):
-        chain.append(("groq2", _make_groq_adapter(k, "groq2")))
+        chain.append(("groq2", _make_groq_adapter(k, "groq2"), GROQ_MODEL))
     if not chain:
         raise RuntimeError(
             "No AI providers configured. Set at least one of "
-            "GEMINI_API_KEY, GEMINI_API_KEY_2, GROQ_API_KEY, GROQ_API_KEY_2 in .env"
+            "GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, "
+            "GROQ_API_KEY, GROQ_API_KEY_2 in .env"
         )
     return chain
 
 
-_chain: list[tuple[str, Adapter]] | None = None
+_chain: list[ChainEntry] | None = None
 
 
-def _get_chain() -> list[tuple[str, Adapter]]:
+def _get_chain() -> list[ChainEntry]:
     """Build the provider chain lazily on first use.
 
     Keeping import side-effect-free means tooling (e.g. the grounding eval in
@@ -115,6 +193,8 @@ def _get_chain() -> list[tuple[str, Adapter]]:
     global _chain
     if _chain is None:
         _chain = _build_chain()
+        chain_desc = " → ".join(_provider_display(label, model) for label, _, model in _chain)
+        log.info(f"AI provider chain ({len(_chain)} steps): {chain_desc}")
     return _chain
 
 
@@ -126,13 +206,24 @@ def complete(prompt: str, max_tokens: int = 200, op: str = "ad-hoc") -> str:
     (summarize_coin / market_mood / daily_digest / ask_coin) for per-feature stats.
     """
     last_err: Exception | None = None
-    for label, adapter in _get_chain():
+    rate_limit.acquire()
+    chain = _get_chain()
+    for i, (label, adapter, model) in enumerate(chain):
+        current = _provider_display(label, model)
+        if i == 0:
+            log.info(f"[{op}] trying {current}")
         t0 = time.perf_counter()
         try:
             text, prompt_tok, completion_tok = adapter(prompt, max_tokens)
         except QuotaError as e:
-            log.warning(f"provider exhausted, trying next: {e}")
+            reason = _quota_reason(e)
             last_err = e
+            if i + 1 < len(chain):
+                nlabel, _, nmodel = chain[i + 1]
+                nxt = _provider_display(nlabel, nmodel)
+                log.warning(f"[{op}] fallback: {current} failed ({reason}) → trying {nxt}")
+            else:
+                log.error(f"[{op}] all providers exhausted; last failure: {current} ({reason})")
             continue
         latency_ms = (time.perf_counter() - t0) * 1000
         rec = metrics.record(
@@ -142,8 +233,10 @@ def complete(prompt: str, max_tokens: int = 200, op: str = "ad-hoc") -> str:
             prompt_tokens=prompt_tok,
             completion_tokens=completion_tok,
         )
+        if i > 0:
+            log.info(f"[{op}] fallback succeeded on {current}")
         log.info(
-            f"[{op}] {label} {rec['total_tokens']}tok "
+            f"[{op}] {current} {rec['total_tokens']}tok "
             f"{rec['latency_ms']}ms ~${rec['est_cost_usd']:.6f}"
         )
         return text
@@ -216,20 +309,100 @@ DIGEST_DISCLAIMER = (
 )
 
 
+def _market_direction(coins: list[dict]) -> str:
+    """Aggregate 24h price direction across coins: down/up/mixed/flat."""
+    if not coins:
+        return "flat"
+    threshold = 0.05
+    down = sum(1 for c in coins if c.get("change_24h_pct", 0) < -threshold)
+    up = sum(1 for c in coins if c.get("change_24h_pct", 0) > threshold)
+    n = len(coins)
+    if down == n:
+        return "down"
+    if up == n:
+        return "up"
+    if down >= n * 0.75:
+        return "down"
+    if up >= n * 0.75:
+        return "up"
+    if down == 0 and up == 0:
+        return "flat"
+    return "mixed"
+
+
+def _verdict_fallback(coins: list[dict], weighted: bool) -> tuple[str, str, str, str]:
+    """Deterministic attention verdict from deviation + market direction."""
+    abnormal = [c for c in coins if (c.get("deviation") or {}).get("status") == "abnormal"]
+    mild = [c for c in coins if (c.get("deviation") or {}).get("status") == "mild"]
+    scope = "พอร์ตคุณ" if weighted else "ตลาดวันนี้"
+    direction = _market_direction(coins)
+
+    if abnormal:
+        syms = ", ".join(c["symbol"] for c in abnormal[:3])
+        prefix = "พอร์ตคุณมี" if weighted else "มี"
+        verdict = f"{prefix} {len(abnormal)} เหรียญผิดปกติ — {syms}"
+        level = "abnormal"
+    elif mild:
+        syms = ", ".join(c["symbol"] for c in mild[:3])
+        prefix = "พอร์ตคุณมี" if weighted else "มี"
+        verdict = f"{prefix} {len(mild)} เหรียญเริ่มผิดปกติ — {syms}"
+        level = "mild"
+    elif direction == "down":
+        verdict = f"{scope}ลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง"
+        level = "normal"
+    elif direction == "up":
+        verdict = f"{scope}ขึ้นและยังอยู่ในกรอบปกติ — ไม่ต้องห่วง"
+        level = "normal"
+    elif direction == "mixed":
+        verdict = f"{scope}ผสม — ยังอยู่ในกรอบปกติ"
+        level = "normal"
+    else:
+        verdict = f"{scope}ปกติ — ไม่ต้องห่วง"
+        level = "normal"
+
+    if level == "normal":
+        avg_24h = sum(c.get("change_24h_pct", 0) for c in coins) / len(coins)
+        if direction == "down":
+            narrative = (
+                f"ทุกเหรียญลงเฉลี่ย {avg_24h:.1f}% (24h) "
+                f"แต่ยังอยู่ในกรอบปกติ 30 วัน — ไม่ใช่การขยับผิดปกติ"
+            )
+        elif direction == "up":
+            narrative = (
+                f"เหรียญหลักขึ้นเฉลี่ย {avg_24h:+.1f}% (24h) "
+                f"และยังอยู่ในกรอบปกติ 30 วัน"
+            )
+        else:
+            syms = ", ".join(c["symbol"] for c in coins)
+            narrative = f"{syms} ยังเคลื่อนไหวอยู่ในกรอบปกติ 30 วัน"
+    else:
+        narrative = ""
+
+    return verdict, narrative, level, direction
+
+
 def daily_digest(coins: list[dict]) -> dict:
     """Build a beginner-friendly 'what happened to your coins today' digest.
 
     Strictly grounded in the numbers/headlines passed in — the model is told to
     invent nothing and to give NO buy/sell advice (spec §3.2, liability §6.2).
-    When coins carry `weight_pct` (share of the user's portfolio) and `heat`
-    (deterministic intensity 0-100), the digest leads with what matters to the
-    user's money — but still only describes facts, never prescribes action.
-    Returns {"overview": str, "per_coin": {SYMBOL: str}, "disclaimer": str}.
+    Returns attention verdict + narrative + mood + per-coin facts.
     """
     if not coins:
-        return {"overview": "ยังไม่มีเหรียญในพอร์ต", "per_coin": {}, "disclaimer": DIGEST_DISCLAIMER}
+        return {
+            "verdict": "ยังไม่มีเหรียญในพอร์ต",
+            "narrative": "",
+            "mood": "",
+            "verdict_level": "normal",
+            "market_direction": "flat",
+            "overview": "ยังไม่มีเหรียญในพอร์ต",
+            "per_coin": {},
+            "disclaimer": DIGEST_DISCLAIMER,
+        }
 
     weighted = any(c.get("weight_pct") is not None for c in coins)
+    fb_verdict, fb_narrative, fb_level, fb_direction = _verdict_fallback(coins, weighted)
+    market_dir = fb_direction
 
     blocks = []
     for c in coins:
@@ -243,8 +416,6 @@ def daily_digest(coins: list[dict]) -> dict:
         weight_str = f", {weight}% ของพอร์ต" if weight is not None else ""
         heat = c.get("heat")
         heat_str = f", Heat {heat}/100 ({c.get('heat_zone', '')})" if heat is not None else ""
-        # Deviation = the wedge signal: is today abnormal vs this coin's own
-        # 30-day baseline. Hand it to the model so it leads with what's NOTABLE.
         dev = c.get("deviation") or {}
         dev_str = ""
         if dev.get("enough_data"):
@@ -261,44 +432,58 @@ def daily_digest(coins: list[dict]) -> dict:
         )
 
     symbols = ", ".join(c["symbol"] for c in coins)
-    # Is anything actually abnormal vs its own baseline today? If not, the most
-    # valuable, trust-building message is "วันนี้ปกติ ไม่มีอะไรต้องห่วง" (PLAN รอบ 2).
     any_abnormal = any((c.get("deviation") or {}).get("status") in ("abnormal", "mild") for c in coins)
-    if any_abnormal:
-        overview_hint = (
-            "<ภาพรวม 1 บรรทัด: ขึ้นต้นด้วยเหรียญที่ 'ผิดปกติเทียบกรอบตัวเอง' วันนี้ก่อน "
-            "(บอกว่าขยับ +X% ซึ่งหลุดกรอบปกติ ±Y% ของมัน)"
-            + (" และถ้ามันเป็นน้ำหนักพอร์ตสูงยิ่งต้องจับตา" if weighted else "")
-            + " — เล่าเป็นข้อเท็จจริง ไม่สั่งซื้อ/ขาย>"
+
+    if weighted:
+        verdict_hint = (
+            "<1 บรรทัด — ต้องเล่า 'ทิศทาง' (ลง/ขึ้น/ผสม) คู่กับ 'ต้องจับตาไหม' "
+            "เช่น 'พอร์ตลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง' หรือ 'พอร์ตมี ETH ผิดปกติ'>"
         )
     else:
-        overview_hint = (
-            "<ภาพรวม 1 บรรทัด: วันนี้ทุกเหรียญยังเคลื่อนไหว 'อยู่ในกรอบปกติ' ของตัวเอง "
-            "บอกตรง ๆ ว่าไม่มีอะไรผิดปกติต้องห่วงเป็นพิเศษ — อย่าปั้นให้ดูตื่นเต้นเกินจริง>"
+        verdict_hint = (
+            "<1 บรรทัด — ต้องเล่า 'ทิศทาง' (ลง/ขึ้น/ผสม) คู่กับ 'ต้องจับตาไหม' "
+            "เช่น 'ตลาดลงทั่วแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง' ห้ามบอกแค่ 'ปกติ' เมื่อทุกเหรียญลง>"
         )
+
+    if any_abnormal:
+        narrative_hint = (
+            "<1-2 ประโยค อธิบายเหตุผลสั้น ๆ — เหรียญไหนขยับเท่าไร ทำไม notable อิงข่าว/ตัวเลข>"
+        )
+    else:
+        narrative_hint = (
+            "<1 ประโยค สรุปว่าเหรียญหลักยังอยู่ในกรอบปกติ — อย่าปั้นให้ดูตื่นเต้น>"
+        )
+
     weight_rule = (
         "ใส่บริบทน้ำหนักพอร์ตได้ (เช่น 'เป็น 60% ของพอร์ตคุณ') เพื่อช่วยจัดลำดับความสนใจ, "
         if weighted
         else ""
     )
     prompt = (
-        "คุณเป็นผู้ช่วยสรุปข่าวคริปโตให้มนุษย์เงินเดือนที่ถือเหรียญอยู่ แต่ไม่มีเวลานั่งเฝ้าจอ\n"
+        "คุณเป็นผู้ช่วยสรุปคริปโตให้มนุษย์เงินเดือนที่ถือเหรียญอยู่ แต่ไม่มีเวลานั่งเฝ้าจอ\n"
         "ตอบคำถามเดียว: 'วันนี้ต้องสนใจอะไรไหม' จากข้อมูลจริงด้านล่างเท่านั้น "
-        "ห้ามแต่งราคา/ตัวเลข/ข่าวที่ไม่ได้ให้มา\n"
-        "หมายเหตุ: Heat = ระดับความ 'ร้อน/สุดโต่ง' (0-100) ไม่ใช่ความน่าซื้อ — RSI สูงหรือต่ำก็ร้อนได้ทั้งคู่\n"
-        "สำคัญสุด: ใช้สถานะ 'ปกติ/เริ่มผิดปกติ/ผิดปกติชัด' (เทียบกรอบ 30 วันของเหรียญเอง) เป็นตัวจัดลำดับความสำคัญ "
-        "— เหรียญที่ 'ผิดปกติ' คือสิ่งที่ต้องพูดก่อน ถ้าไม่มีอะไรผิดปกติให้บอกตรง ๆ ว่าวันนี้ปกติ\n\n"
+        "ห้ามแต่งราคา/ตัวเลข/ข่าวที่ไม่ได้ใหมา\n"
+        "สำคัญ: VERDICT = attention verdict (ต้องจับตาไหม) ไม่ใช่คำสั่งซื้อ/ขาย\n"
+        "  - ต้องเล่าทิศทางตลาด (ลง/ขึ้น/ผสม) คู่กับความผิดปกติเสมอ\n"
+        "  - อนุญาต: 'ลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง', 'มี X ผิดปกติ — จับตา'\n"
+        "  - ห้าม: 'ควรซื้อ', 'ควรขาย', 'น่าสะสม', 'เข้าซื้อ', 'ออกขาย'\n"
+        "Heat = ระดับความ 'ร้อน/สุดโต่ง' (0-100) ไม่ใช่ความน่าซื้อ\n"
+        "ใช้สถานะ 'ปกติ/เริ่มผิดปกติ/ผิดปกติชัด' (เทียบกรอบ 30 วัน) เป็นตัวจัดลำดับ\n\n"
         f"ข้อมูล ({symbols}):\n" + "\n".join(blocks) + "\n\n"
         "ตอบเป็นภาษาไทย ใช้รูปแบบนี้เป๊ะ ๆ (หนึ่งบรรทัดต่อหัวข้อ):\n"
-        f"OVERVIEW: {overview_hint}\n"
+        f"VERDICT: {verdict_hint}\n"
+        f"NARRATIVE: {narrative_hint}\n"
+        "MOOD: <1 บรรทัดสั้น ๆ อารมณ์ตลาดโดยรวม เช่น 'mixed — BTC นิ่ง ETH แรง'>\n"
         + "\n".join(f"{c['symbol']}: <1-2 ประโยค อะไรขยับและทำไม อิงข่าว/ตัวเลขจริง>" for c in coins)
-        + "\n\nกฎ: อ้างตัวเลขจริง, ภาษาง่ายเหมาะมือใหม่, อธิบายศัพท์เทคนิคสั้น ๆ ถ้าใช้, "
+        + "\n\nกฎ: อ้างตัวเลขจริง, ภาษาง่ายเหมาะมือใหม่, "
         + weight_rule
-        + "ห้ามให้คำแนะนำซื้อ/ขายหรือบอกว่าควรเข้า/ออก แค่เล่าว่าเกิดอะไรขึ้นและรุนแรงแค่ไหน"
+        + "ห้ามให้คำแนะนำซื้อ/ขาย — แค่เล่าว่าเกิดอะไรขึ้นและรุนแรงแค่ไหน"
     )
-    raw = complete(prompt, max_tokens=90 + 60 * len(coins), op="daily_digest")
+    raw = complete(prompt, max_tokens=140 + 70 * len(coins), op="daily_digest")
 
-    overview = ""
+    verdict = ""
+    narrative = ""
+    mood = ""
     per_coin: dict[str, str] = {}
     valid = {c["symbol"].upper() for c in coins}
     for line in raw.splitlines():
@@ -308,17 +493,55 @@ def daily_digest(coins: list[dict]) -> dict:
         label, _, text = line.partition(":")
         label = label.strip().upper()
         text = text.strip()
-        if label == "OVERVIEW":
-            overview = text
+        if label == "VERDICT":
+            verdict = text
+        elif label == "NARRATIVE":
+            narrative = text
+        elif label == "MOOD":
+            mood = text
+        elif label == "OVERVIEW":
+            if not narrative:
+                narrative = text
         elif label in valid:
             per_coin[label] = text
 
-    # Fallback: if the model ignored the format, surface the raw text rather
-    # than show nothing.
-    if not overview and not per_coin:
-        overview = raw.strip()
+    if not verdict:
+        verdict = fb_verdict
+    elif fb_level == "normal" and market_dir == "down" and "ลง" not in verdict:
+        verdict = fb_verdict
+    if not narrative:
+        narrative = fb_narrative or raw.strip()
+    elif fb_level == "normal" and market_dir == "down" and "24h" not in narrative and fb_narrative:
+        narrative = fb_narrative
+    if not mood:
+        try:
+            mood = market_mood(coins)
+        except Exception:
+            mood = ""
 
-    return {"overview": overview, "per_coin": per_coin, "disclaimer": DIGEST_DISCLAIMER}
+    level = fb_level
+    if "ผิดปกติชัด" in verdict or "ผิดปกติ" in verdict and "เริ่ม" not in verdict:
+        if any((c.get("deviation") or {}).get("status") == "abnormal" for c in coins):
+            level = "abnormal"
+    if "เริ่มผิดปกติ" in verdict or level == "mild":
+        if any((c.get("deviation") or {}).get("status") == "mild" for c in coins) and level != "abnormal":
+            level = "mild"
+    if "ปกติ" in verdict or "ไม่ต้องห่วง" in verdict:
+        if not any((c.get("deviation") or {}).get("status") in ("abnormal", "mild") for c in coins):
+            level = "normal"
+
+    overview = narrative if narrative else verdict
+
+    return {
+        "verdict": verdict,
+        "narrative": narrative,
+        "mood": mood,
+        "verdict_level": level,
+        "market_direction": market_dir,
+        "overview": overview,
+        "per_coin": per_coin,
+        "disclaimer": DIGEST_DISCLAIMER,
+    }
 
 
 def ask_coin(coin_snapshot: dict, question: str) -> str:

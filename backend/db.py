@@ -15,6 +15,11 @@ DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "cryptolens.db
 
 DEFAULT_WATCHLIST = ["BTC", "ETH", "BNB", "SOL"]
 WATCHLIST_MAX = 10  # cap to keep digest token/quota usage bounded (spec §8 Q2)
+DIGEST_FORCE_MAX = 3  # max manual force-refreshes per user per UTC hour
+
+
+def digest_shared_key(bucket: str, symbols: list[str]) -> str:
+    return f"{bucket}:{','.join(sorted(symbols))}"
 
 
 def _connect() -> sqlite3.Connection:
@@ -60,6 +65,19 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, symbol)
+            );
+
+            CREATE TABLE IF NOT EXISTS digest_shared_cache (
+                cache_key  TEXT PRIMARY KEY,
+                payload    TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS digest_force_refresh (
+                user_id TEXT NOT NULL,
+                bucket  TEXT NOT NULL,
+                count   INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (user_id, bucket)
             );
             """
         )
@@ -217,13 +235,13 @@ def reorder_watchlist(user_id: str, symbols: list[str]) -> None:
 # token/quota usage (same rationale as the watchlist cap).
 
 def get_holdings(user_id: str) -> list[dict]:
-    """Return the user's holdings as [{symbol, amount}], newest-edited first."""
+    """Return the user's holdings as [{symbol, amount}], oldest-added first."""
     init_db()
     conn = _connect()
     try:
         rows = conn.execute(
             "SELECT symbol, amount FROM holding WHERE user_id = ? "
-            "ORDER BY updated_at DESC, symbol ASC",
+            "ORDER BY created_at ASC, symbol ASC",
             (user_id,),
         ).fetchall()
     finally:
@@ -316,18 +334,15 @@ def save_chart_drawings(user_id: str, symbol: str, drawings: list) -> None:
         conn.close()
 
 
-# ─── Daily digest cache (persistent, true per-day) ──────────────────────
+# ─── Shared digest cache (same symbols, no holdings → one LLM call for all) ─
 
-def get_digest_cache(user_id: str, day: str) -> Optional[dict]:
-    """The in-memory cache (cache.py) has a 60s TTL — too short for a *daily*
-    digest. Persist it here so we hit the LLM at most once per user per day
-    and survive restarts (spec §3.2 / §6 quota risk)."""
+def get_shared_digest_cache(cache_key: str) -> Optional[dict]:
     init_db()
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT payload FROM digest_cache WHERE user_id = ? AND day = ?",
-            (user_id, day),
+            "SELECT payload FROM digest_shared_cache WHERE cache_key = ?",
+            (cache_key,),
         ).fetchone()
     finally:
         conn.close()
@@ -339,7 +354,111 @@ def get_digest_cache(user_id: str, day: str) -> Optional[dict]:
         return None
 
 
-def set_digest_cache(user_id: str, day: str, payload: dict) -> None:
+def set_shared_digest_cache(cache_key: str, payload: dict) -> None:
+    init_db()
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO digest_shared_cache (cache_key, payload, created_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(cache_key)
+            DO UPDATE SET payload = excluded.payload, created_at = CURRENT_TIMESTAMP
+            """,
+            (cache_key, json.dumps(payload)),
+        )
+        conn.execute(
+            """
+            DELETE FROM digest_shared_cache
+            WHERE cache_key NOT IN (
+                SELECT cache_key FROM digest_shared_cache
+                ORDER BY created_at DESC LIMIT 96
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ─── Force-refresh budget (per user per UTC hour) ───────────────────────
+
+def can_force_refresh(user_id: str, bucket: str, max_per_hour: int = DIGEST_FORCE_MAX) -> bool:
+    init_db()
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT count FROM digest_force_refresh WHERE user_id = ? AND bucket = ?",
+            (user_id, bucket),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row["count"]) < max_per_hour if row else True
+
+
+def record_force_refresh(user_id: str, bucket: str) -> None:
+    init_db()
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO digest_force_refresh (user_id, bucket, count)
+            VALUES (?, ?, 1)
+            ON CONFLICT(user_id, bucket)
+            DO UPDATE SET count = count + 1
+            """,
+            (user_id, bucket),
+        )
+        conn.execute(
+            """
+            DELETE FROM digest_force_refresh
+            WHERE bucket NOT IN (
+                SELECT bucket FROM digest_force_refresh
+                ORDER BY bucket DESC LIMIT 72
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def force_refresh_remaining(user_id: str, bucket: str, max_per_hour: int = DIGEST_FORCE_MAX) -> int:
+    init_db()
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT count FROM digest_force_refresh WHERE user_id = ? AND bucket = ?",
+            (user_id, bucket),
+        ).fetchone()
+    finally:
+        conn.close()
+    used = int(row["count"]) if row else 0
+    return max(0, max_per_hour - used)
+
+
+# ─── Per-user digest cache (portfolio-weighted digests) ─────────────────
+
+def get_digest_cache(user_id: str, bucket: str) -> Optional[dict]:
+    """Portfolio-weighted digest: at most one LLM call per user per UTC hour."""
+    init_db()
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT payload FROM digest_cache WHERE user_id = ? AND day = ?",
+            (user_id, bucket),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    try:
+        return json.loads(row["payload"])
+    except (ValueError, TypeError):
+        return None
+
+
+def set_digest_cache(user_id: str, bucket: str, payload: dict) -> None:
     init_db()
     conn = _connect()
     try:
@@ -350,15 +469,15 @@ def set_digest_cache(user_id: str, day: str, payload: dict) -> None:
             ON CONFLICT(user_id, day)
             DO UPDATE SET payload = excluded.payload, created_at = CURRENT_TIMESTAMP
             """,
-            (user_id, day, json.dumps(payload)),
+            (user_id, bucket, json.dumps(payload)),
         )
-        # Opportunistic cleanup: keep only the 7 most recent days per user.
+        # Keep the 48 most recent hourly buckets per user (~2 days).
         conn.execute(
             """
             DELETE FROM digest_cache
             WHERE user_id = ? AND day NOT IN (
                 SELECT day FROM digest_cache WHERE user_id = ?
-                ORDER BY day DESC LIMIT 7
+                ORDER BY day DESC LIMIT 48
             )
             """,
             (user_id, user_id),
