@@ -31,13 +31,26 @@ _GEMINI_KEY_ENVS = ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3")
 
 
 class QuotaError(Exception):
-    """Provider hit rate-limit / quota / auth issue — try next provider."""
+    """Provider unusable right now (quota / auth / transient outage) — try next provider."""
 
 
 def _is_quota_error(e: Exception) -> bool:
     msg = str(e).lower()
     return any(s in msg for s in ("429", "quota", "rate limit", "rate_limit", "resource_exhausted",
                                   "unauthenticated", "invalid api key", "permission_denied"))
+
+
+def _is_transient_error(e: Exception) -> bool:
+    """Temporary provider outage (5xx / overload / timeout) — the next provider may well work.
+
+    These are exactly what a multi-provider chain exists for, so they must fall
+    through just like quota errors. A false positive only costs one extra attempt
+    on the next provider; a false negative (the old behaviour) surfaces a 503 to
+    the user instead of trying healthy Groq.
+    """
+    msg = str(e).lower()
+    return any(s in msg for s in ("503", "504", "unavailable", "overloaded", "try again later",
+                                  "temporarily", "deadline", "timeout", "timed out"))
 
 
 def _quota_reason(e: Exception) -> str:
@@ -59,6 +72,10 @@ def _quota_reason(e: Exception) -> str:
         return "quota / rate limit (429)"
     if "quota" in msg:
         return "quota exceeded"
+    if any(s in msg for s in ("503", "unavailable", "overloaded", "try again later", "temporarily")):
+        return "provider overloaded (503)"
+    if any(s in msg for s in ("504", "deadline", "timeout", "timed out")):
+        return "timeout"
     # Strip provider prefix like "gemini: ..." for readability.
     text = str(e).split(": ", 1)[-1]
     return text[:160] if len(text) > 160 else text
@@ -119,7 +136,7 @@ def _make_gemini_adapter(api_key: str, label: str, model: str) -> Adapter:
             log.info(f"served by {label} ({model})")
             return text, prompt_tok, completion_tok
         except Exception as e:
-            if _is_quota_error(e):
+            if _is_quota_error(e) or _is_transient_error(e):
                 raise QuotaError(f"{label}: {e}") from e
             raise
 
@@ -147,7 +164,7 @@ def _make_groq_adapter(api_key: str, label: str = "groq") -> Adapter:
             log.info(f"served by {label} ({GROQ_MODEL})")
             return text, prompt_tok, completion_tok
         except Exception as e:
-            if _is_quota_error(e):
+            if _is_quota_error(e) or _is_transient_error(e):
                 raise QuotaError(f"{label}: {e}") from e
             raise
 
@@ -479,7 +496,16 @@ def daily_digest(coins: list[dict]) -> dict:
         + weight_rule
         + "ห้ามให้คำแนะนำซื้อ/ขาย — แค่เล่าว่าเกิดอะไรขึ้นและรุนแรงแค่ไหน"
     )
-    raw = complete(prompt, max_tokens=140 + 70 * len(coins), op="daily_digest")
+    # If every provider is down, don't 502 the user — fall through to the
+    # deterministic verdict (same engine the backtest validates). raw="" makes
+    # the parser below find nothing, so the fb_* values take over wholesale.
+    degraded = False
+    try:
+        raw = complete(prompt, max_tokens=140 + 70 * len(coins), op="daily_digest")
+    except Exception as e:
+        log.warning(f"daily_digest: all AI providers unavailable ({e}) — serving deterministic fallback")
+        raw = ""
+        degraded = True
 
     verdict = ""
     narrative = ""
@@ -541,6 +567,7 @@ def daily_digest(coins: list[dict]) -> dict:
         "overview": overview,
         "per_coin": per_coin,
         "disclaimer": DIGEST_DISCLAIMER,
+        "degraded": degraded,
     }
 
 

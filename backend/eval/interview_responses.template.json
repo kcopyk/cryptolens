@@ -1,0 +1,14 @@
+{
+  "instructions": "หนึ่ง entry ต่อ participant × scenario. คopy template แล้ว rename เป็น interview_responses.json",
+  "entries": [
+    {
+      "participant_id": "P1",
+      "scenario_id": "abnormal-2024-02-08",
+      "scenario_date": "2024-02-08",
+      "q1_match": true,
+      "q2_understand": true,
+      "q3_anxiety": 4,
+      "notes": ""
+    }
+  ]
+}

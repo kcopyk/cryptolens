@@ -175,9 +175,10 @@ def compute_facts(
 # ~30-day distribution of daily returns. Same candles in → same status out, and
 # every number is returned so the user can check "why abnormal?".
 
-# |z| thresholds → status. Tuned so most days read "normal" (the honest default).
-DEV_MILD_Z = 1.0      # 1–2 SD = เริ่มผิดปกติ
-DEV_ABNORMAL_Z = 2.0  # ≥2 SD  = ผิดปกติชัด
+# |z| thresholds → status. Tuned via eval/backtest_deviation.py sweep (2026-06-18):
+# calm ≥85%, spike recall ≥85%, ranking ≥85% on 2024–2026 portfolio backtest.
+DEV_MILD_Z = 1.75     # 1.75–1.9 SD = เริ่มผิดปกติ
+DEV_ABNORMAL_Z = 1.9  # ≥1.9 SD = ผิดปกติชัด
 
 
 def _daily_returns_pct(daily_candles: list[dict]) -> list[float]:
@@ -190,14 +191,23 @@ def _daily_returns_pct(daily_candles: list[dict]) -> list[float]:
     return out
 
 
-def compute_deviation(daily_candles: list[dict]) -> dict:
+def compute_deviation(
+    daily_candles: list[dict],
+    *,
+    mild_z: float | None = None,
+    abnormal_z: float | None = None,
+) -> dict:
     """How abnormal is today's move vs this coin's OWN 30-day baseline.
 
     Returns a status (normal/mild/abnormal) + direction + the raw numbers behind
     it. NOT a verdict: "abnormal down" never means "sell" — it means "today's
     drop is large *for this coin*", which is exactly the context that calms (or
     rightly alerts) a worried holder.
+
+    Optional mild_z / abnormal_z override module defaults (used by eval sweep).
     """
+    mild_cut = DEV_MILD_Z if mild_z is None else mild_z
+    abnormal_cut = DEV_ABNORMAL_Z if abnormal_z is None else abnormal_z
     returns = _daily_returns_pct(daily_candles)
     base = {
         "status": "normal",
@@ -230,9 +240,9 @@ def compute_deviation(daily_candles: list[dict]) -> dict:
         z = (today - mean) / std
 
     az = abs(z)
-    if az >= DEV_ABNORMAL_Z:
+    if az >= abnormal_cut:
         status = "abnormal"
-    elif az >= DEV_MILD_Z:
+    elif az >= mild_cut:
         status = "mild"
     else:
         status = "normal"

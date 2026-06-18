@@ -1,0 +1,31 @@
+---
+description: ตอบสั้น ครบใจความ — ทุกคำถามใน CryptoLens
+alwaysApply: true
+---
+
+# ตอบสั้น ได้ใจความ (CryptoLens)
+
+## โครงสร้างทุกคำตอบ
+1. **สรุป 1–2 ประโยค** — ตอบคำถามตรง ๆ ก่อน
+2. **ใจความ 3–5 bullet** — idea หลัก ไม่ซ้ำกัน
+3. **Action (ถ้ามี)** — ขั้นถัดไป 1 บรรทัด
+
+## ความยาว
+- คำถามง่าย: ≤15 บรรทัด
+- คำถามซับซ้อน / แผน / ออกแบบ: ≤35 บรรทัด
+- หลีกเลี่ยง intro ยาว, ทวนคำถาม, closing fluff ("บอกได้ถ้า...")
+- ไม่ใช้ตารางถ้า 3 bullet พอ · ไม่ bold/`code` ตกแต่งเกินจำเป็น
+
+## ภาษา
+- ตอบภาษาเดียวกับ user (ไทย/อังกฤษ)
+- ประโยคสมบูรณ์ ไม่ telegraphic · ยังต้องมี trade-off และ "ทำไม"
+
+## Product context (CryptoLens)
+- คำถาม product / strategy / feature → อ่าน `PLAN.md` ก่อนตอบ (อย่างน้อย iron rules + positioning)
+- คำถาม setup / API / deploy → อ่าน `README.md` ก่อน
+- คำถาม UI → อ่าน `frontend/design.md` ถ้าเกี่ยว
+- ห้ามเสนอ feature ที่ขัด iron rules: ไม่สั่งซื้อขาย · Heat/deviation deterministic · ไม่แตะ trade key
+
+## โค้ด
+- แก้เฉพาะที่ขอ · diff เล็ก · อ่าน conventions รอบ ๆ ก่อนเขียน
+- อย่า commit / สร้างไฟล์ doc เพิ่ม ถ้า user ไม่ขอ

@@ -1,0 +1,363 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-18T18:31:35Z",
+  "study": "B qualitative — portfolio triage comprehension",
+  "window": {
+    "start": "2022-01-01",
+    "end": "2026-06-19"
+  },
+  "portfolio": {
+    "BTC": 40.0,
+    "ETH": 20.0,
+    "BNB": 20.0,
+    "XRP": 20.0
+  },
+  "questions": [
+    {
+      "id": "q1_match",
+      "text": "one-liner ตรงกับที่คุณรู้สึกว่าวันนั้นพอร์ตเป็นไง?",
+      "type": "yes_no",
+      "pass": "yes"
+    },
+    {
+      "id": "q2_understand",
+      "text": "เข้าใจว่าทำไมเหรียญที่ highlight ถูกเน้น?",
+      "type": "yes_no",
+      "pass": "yes"
+    },
+    {
+      "id": "q3_anxiety",
+      "text": "หลังอ่านแล้วระดับกังวล (1=เพิ่มมาก · 3=เท่าเดิม · 5=ลดมาก)",
+      "type": "scale_1_5",
+      "pass_at_least": 3
+    }
+  ],
+  "pass_criteria": {
+    "min_participants": 5,
+    "q2_yes_ratio": 0.8,
+    "q3_at_least_3_ratio": 0.6,
+    "notes": "≥4/5 เข้าใจ (q2) และ ≥3/5 กังวลลดหรือเท่าเดิม (q3 ≥3)"
+  },
+  "scenarios": [
+    {
+      "id": "abnormal-2022-02-04",
+      "kind": "abnormal",
+      "date": "2022-02-04",
+      "hero": "พอร์ตคุณมี 4 เหรียญผิดปกติ — BTC, ETH, XRP",
+      "narrative": "",
+      "verdict_level": "abnormal",
+      "market_direction": "up",
+      "body": [
+        {
+          "symbol": "BTC",
+          "line": "BTC — ผิดปกติชัด ~4.5× สวิงปกติ (+11.4%) · 40% ของพอร์ต",
+          "weight_pct": 40.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "up",
+            "today_return_pct": 11.42,
+            "z": 4.49,
+            "baseline_mean_pct": -0.75,
+            "baseline_std_pct": 2.71,
+            "normal_low_pct": -3.46,
+            "normal_high_pct": 1.96,
+            "window_days": 40,
+            "enough_data": true
+          }
+        },
+        {
+          "symbol": "ETH",
+          "line": "ETH — ผิดปกติชัด ~3.1× สวิงปกติ (+11.1%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "up",
+            "today_return_pct": 11.11,
+            "z": 3.06,
+            "baseline_mean_pct": -0.97,
+            "baseline_std_pct": 3.95,
+            "normal_low_pct": -4.92,
+            "normal_high_pct": 2.98,
+            "window_days": 40,
+            "enough_data": true
+          }
+        },
+        {
+          "symbol": "XRP",
+          "line": "XRP — ผิดปกติชัด ~2.5× สวิงปกติ (+7.4%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "up",
+            "today_return_pct": 7.42,
+            "z": 2.51,
+            "baseline_mean_pct": -0.99,
+            "baseline_std_pct": 3.35,
+            "normal_low_pct": -4.34,
+            "normal_high_pct": 2.36,
+            "window_days": 40,
+            "enough_data": true
+          }
+        },
+        {
+          "symbol": "BNB",
+          "line": "BNB — ผิดปกติชัด ~2.0× สวิงปกติ (+7.3%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "up",
+            "today_return_pct": 7.31,
+            "z": 1.98,
+            "baseline_mean_pct": -0.89,
+            "baseline_std_pct": 4.15,
+            "normal_low_pct": -5.04,
+            "normal_high_pct": 3.26,
+            "window_days": 40,
+            "enough_data": true
+          }
+        }
+      ],
+      "responses": []
+    },
+    {
+      "id": "abnormal-2022-11-09",
+      "kind": "abnormal",
+      "date": "2022-11-09",
+      "hero": "พอร์ตคุณมี 4 เหรียญผิดปกติ — BTC, BNB, XRP",
+      "narrative": "",
+      "verdict_level": "abnormal",
+      "market_direction": "down",
+      "body": [
+        {
+          "symbol": "BTC",
+          "line": "BTC — ผิดปกติชัด ~6.0× สวิงปกติ (-14.2%) · 40% ของพอร์ต",
+          "weight_pct": 40.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "down",
+            "today_return_pct": -14.15,
+            "z": -6.01,
+            "baseline_mean_pct": -0.09,
+            "baseline_std_pct": 2.34,
+            "normal_low_pct": -2.43,
+            "normal_high_pct": 2.25,
+            "window_days": 40,
+            "enough_data": true
+          }
+        },
+        {
+          "symbol": "BNB",
+          "line": "BNB — ผิดปกติชัด ~8.5× สวิงปกติ (-18.4%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "down",
+            "today_return_pct": -18.36,
+            "z": -8.48,
+            "baseline_mean_pct": 0.38,
+            "baseline_std_pct": 2.21,
+            "normal_low_pct": -1.83,
+            "normal_high_pct": 2.59,
+            "window_days": 40,
+            "enough_data": true
+          }
+        },
+        {
+          "symbol": "XRP",
+          "line": "XRP — ผิดปกติชัด ~4.7× สวิงปกติ (-17.9%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "down",
+            "today_return_pct": -17.94,
+            "z": -4.67,
+            "baseline_mean_pct": -0.36,
+            "baseline_std_pct": 3.77,
+            "normal_low_pct": -4.12,
+            "normal_high_pct": 3.41,
+            "window_days": 40,
+            "enough_data": true
+          }
+        },
+        {
+          "symbol": "ETH",
+          "line": "ETH — ผิดปกติชัด ~4.6× สวิงปกติ (-17.4%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "down",
+            "today_return_pct": -17.38,
+            "z": -4.62,
+            "baseline_mean_pct": 0.09,
+            "baseline_std_pct": 3.78,
+            "normal_low_pct": -3.69,
+            "normal_high_pct": 3.86,
+            "window_days": 40,
+            "enough_data": true
+          }
+        }
+      ],
+      "responses": []
+    },
+    {
+      "id": "abnormal-2023-07-13",
+      "kind": "abnormal",
+      "date": "2023-07-13",
+      "hero": "พอร์ตคุณมี 2 เหรียญผิดปกติ — XRP, ETH",
+      "narrative": "",
+      "verdict_level": "abnormal",
+      "market_direction": "up",
+      "body": [
+        {
+          "symbol": "XRP",
+          "line": "XRP — ผิดปกติชัด ~29.9× สวิงปกติ (+73.1%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "up",
+            "today_return_pct": 73.1,
+            "z": 29.9,
+            "baseline_mean_pct": -0.22,
+            "baseline_std_pct": 2.45,
+            "normal_low_pct": -2.67,
+            "normal_high_pct": 2.24,
+            "window_days": 40,
+            "enough_data": true
+          }
+        },
+        {
+          "symbol": "ETH",
+          "line": "ETH — ผิดปกติชัด ~3.1× สวิงปกติ (+7.1%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "up",
+            "today_return_pct": 7.09,
+            "z": 3.09,
+            "baseline_mean_pct": -0.0,
+            "baseline_std_pct": 2.3,
+            "normal_low_pct": -2.3,
+            "normal_high_pct": 2.3,
+            "window_days": 40,
+            "enough_data": true
+          }
+        },
+        {
+          "symbol": "BNB",
+          "line": "BNB — เริ่มผิดปกติ ~1.8× สวิงปกติ (+5.0%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "mild",
+            "direction": "up",
+            "today_return_pct": 5.0,
+            "z": 1.81,
+            "baseline_mean_pct": -0.54,
+            "baseline_std_pct": 3.05,
+            "normal_low_pct": -3.59,
+            "normal_high_pct": 2.52,
+            "window_days": 40,
+            "enough_data": true
+          }
+        }
+      ],
+      "responses": []
+    },
+    {
+      "id": "abnormal-2024-12-23",
+      "kind": "abnormal",
+      "date": "2024-12-23",
+      "hero": "พอร์ตคุณมี 1 เหรียญผิดปกติ — BNB",
+      "narrative": "",
+      "verdict_level": "abnormal",
+      "market_direction": "up",
+      "body": [
+        {
+          "symbol": "BNB",
+          "line": "BNB — ผิดปกติชัด ~2.1× สวิงปกติ (+6.8%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "up",
+            "today_return_pct": 6.83,
+            "z": 2.06,
+            "baseline_mean_pct": 0.17,
+            "baseline_std_pct": 3.24,
+            "normal_low_pct": -3.07,
+            "normal_high_pct": 3.41,
+            "window_days": 40,
+            "enough_data": true
+          }
+        }
+      ],
+      "responses": []
+    },
+    {
+      "id": "abnormal-2026-06-11",
+      "kind": "abnormal",
+      "date": "2026-06-11",
+      "hero": "พอร์ตคุณมี 2 เหรียญผิดปกติ — BTC, XRP",
+      "narrative": "",
+      "verdict_level": "abnormal",
+      "market_direction": "up",
+      "body": [
+        {
+          "symbol": "BTC",
+          "line": "BTC — ผิดปกติชัด ~2.1× สวิงปกติ (+3.4%) · 40% ของพอร์ต",
+          "weight_pct": 40.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "up",
+            "today_return_pct": 3.44,
+            "z": 2.11,
+            "baseline_mean_pct": -0.61,
+            "baseline_std_pct": 1.92,
+            "normal_low_pct": -2.53,
+            "normal_high_pct": 1.31,
+            "window_days": 40,
+            "enough_data": true
+          }
+        },
+        {
+          "symbol": "XRP",
+          "line": "XRP — ผิดปกติชัด ~2.0× สวิงปกติ (+4.2%) · 20% ของพอร์ต",
+          "weight_pct": 20.0,
+          "deviation": {
+            "status": "abnormal",
+            "direction": "up",
+            "today_return_pct": 4.18,
+            "z": 1.96,
+            "baseline_mean_pct": -0.58,
+            "baseline_std_pct": 2.42,
+            "normal_low_pct": -3.0,
+            "normal_high_pct": 1.84,
+            "window_days": 40,
+            "enough_data": true
+          }
+        }
+      ],
+      "responses": []
+    },
+    {
+      "id": "calm_control-2022-02-02",
+      "kind": "calm_control",
+      "date": "2022-02-02",
+      "hero": "พอร์ตคุณลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง",
+      "narrative": "ทุกเหรียญลงเฉลี่ย -4.3% (24h) แต่ยังอยู่ในกรอบปกติ 30 วัน — ไม่ใช่การขยับผิดปกติ",
+      "verdict_level": "normal",
+      "market_direction": "down",
+      "body": [],
+      "responses": []
+    },
+    {
+      "id": "calm_control-2024-08-11",
+      "kind": "calm_control",
+      "date": "2024-08-11",
+      "hero": "พอร์ตคุณลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง",
+      "narrative": "ทุกเหรียญลงเฉลี่ย -3.7% (24h) แต่ยังอยู่ในกรอบปกติ 30 วัน — ไม่ใช่การขยับผิดปกติ",
+      "verdict_level": "normal",
+      "market_direction": "down",
+      "body": [],
+      "responses": []
+    }
+  ]
+}

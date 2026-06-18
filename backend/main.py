@@ -468,10 +468,14 @@ async def digest(
                 for c in coins
             ],
         }
-        if total_value > 0:
-            db.set_digest_cache(user, bucket, payload)
-        else:
-            db.set_shared_digest_cache(shared_key, payload)
+        # Don't pin a degraded (all-providers-down) digest for the whole hour —
+        # the next request retries the LLM instead of serving a deterministic-only
+        # digest until the bucket rolls over.
+        if not result.get("degraded"):
+            if total_value > 0:
+                db.set_digest_cache(user, bucket, payload)
+            else:
+                db.set_shared_digest_cache(shared_key, payload)
         if force:
             db.record_force_refresh(user, bucket)
         return {
