@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,7 +46,7 @@ def digest_bucket() -> str:
 
 async def fetch_coin(symbol: str) -> dict:
     closes, ticker, news = await asyncio.gather(
-        bnb.get_klines(symbol, limit=100),
+        bnb.get_klines(symbol, interval="1d", limit=100),
         bnb.get_24h(symbol),
         news_api.get_news(symbol),
     )
@@ -210,14 +211,39 @@ async def ask(body: AskBody):
     if not snapshot:
         raise HTTPException(status_code=404, detail=f"No snapshot for {symbol}. Load insights first.")
     try:
+        # Enrich snapshot for chat: fresh headlines + deterministic heat/deviation.
+        snap = dict(snapshot)
+        daily, fresh_news = await asyncio.gather(
+            _get_daily_candles(symbol),
+            news_api.get_news(symbol, limit=10),
+        )
+        if fresh_news:
+            snap["news"] = fresh_news
+        rsi = snap.get("rsi", 50)
+        change = snap.get("change_24h_pct", 0.0)
+        h = heat_mod.compute_heat(rsi, daily, snap.get("news") or [])
+        snap["heat"] = h
+        snap["deviation"] = heat_mod.compute_deviation(daily)
+        snap["facts"] = heat_mod.compute_facts(rsi, daily, snap.get("news") or [], change)
+
         # Summaries are generated lazily (not on every insights load) to stay
         # under the free-tier RPM limit. Build it on the first question, then
         # cache it back onto the snapshot so later questions reuse it.
-        if not snapshot.get("summary"):
-            snapshot["summary"] = ai.summarize_coin(snapshot)
-            cache.set(f"snapshot:{symbol}", snapshot)
-        answer = ai.ask_coin(snapshot, body.question)
-        return {"answer": answer, "as_of": snapshot.get("as_of", now_iso())}
+        try:
+            if not snap.get("summary"):
+                snap["summary"] = ai.summarize_coin(snap)
+            cache.set(f"snapshot:{symbol}", {**snap, "as_of": now_iso()})
+            answer = ai.ask_coin(snap, body.question)
+            return {"answer": answer, "as_of": snap.get("as_of", now_iso()), "degraded": False}
+        except RuntimeError as e:
+            # All AI providers exhausted — degrade to deterministic facts instead
+            # of 502ing the chat (same principle as the digest triage fallback).
+            logging.getLogger("main").warning(
+                f"/api/ask: AI unavailable ({e}) — serving deterministic fallback"
+            )
+            cache.set(f"snapshot:{symbol}", {**snap, "as_of": now_iso()})
+            answer = ai.ask_coin_fallback(snap, body.question)
+            return {"answer": answer, "as_of": snap.get("as_of", now_iso()), "degraded": True}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -335,6 +361,7 @@ def delete_watchlist(symbol: str, x_user_id: Optional[str] = Header(None)):
 class HoldingBody(BaseModel):
     symbol: str
     amount: float
+    avg_price: Optional[float] = None
 
 
 @app.get("/api/holdings")
@@ -359,8 +386,46 @@ async def upsert_holding(body: HoldingBody, x_user_id: Optional[str] = Header(No
         )
     if not await bnb.validate_symbol(symbol):
         raise HTTPException(status_code=400, detail=f"ไม่พบเหรียญ {symbol} บน Binance (ต้องมีคู่ {symbol}USDT)")
-    db.upsert_holding(user, symbol, body.amount)
+    avg_price = body.avg_price
+    if avg_price is not None and avg_price <= 0:
+        raise HTTPException(status_code=400, detail="ราคาเฉลี่ยต้องมากกว่า 0")
+    if avg_price is None and symbol in existing:
+        for h in db.get_holdings(user):
+            if h["symbol"] == symbol:
+                avg_price = h.get("avg_price")
+                break
+    db.upsert_holding(user, symbol, body.amount, avg_price)
     return {"holdings": db.get_holdings(user)}
+
+
+@app.post("/api/holdings/sync-binance")
+async def sync_holdings_from_binance(x_user_id: Optional[str] = Header(None)):
+    """Replace manual holdings with live Spot balances (read-only API key)."""
+    user = _require_user(x_user_id)
+    if db.get_portfolio_mode(user) != "testnet":
+        raise HTTPException(
+            status_code=400,
+            detail="ซิงก์ Binance ได้ในโหมด Testnet เท่านั้น",
+        )
+    if not vault.get_keys(user) and not binance_trade.env_keys_configured(user):
+        raise HTTPException(
+            status_code=400,
+            detail="ยังไม่ได้เชื่อม Binance API — ใส่ Read-only key ในการตั้งค่าก่อน",
+        )
+    try:
+        synced = await binance_trade.build_holdings_from_account(
+            user_id=user,
+            max_coins=db.WATCHLIST_MAX,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not synced:
+        raise HTTPException(
+            status_code=400,
+            detail="ไม่พบเหรียญใน Spot wallet (หรือยอดน้อยกว่า $1)",
+        )
+    db.replace_holdings(user, synced)
+    return {"holdings": db.get_holdings(user), "synced": len(synced)}
 
 
 @app.delete("/api/holdings/{symbol}")
@@ -385,6 +450,9 @@ async def digest(
     bucket = digest_bucket()
     weighted = bool(holdings)
     shared_key = db.digest_shared_key(bucket, symbols)
+    weighted_cache_key = (
+        db.digest_holdings_key(bucket, holdings) if holdings else bucket
+    )
 
     if force:
         if not db.can_force_refresh(user, bucket):
@@ -396,7 +464,7 @@ async def digest(
     cached = None
     if not force:
         if weighted:
-            cached = db.get_digest_cache(user, bucket)
+            cached = db.get_digest_cache(user, weighted_cache_key)
         else:
             cached = db.get_shared_digest_cache(shared_key)
     if cached:
@@ -422,6 +490,8 @@ async def digest(
         total_value = sum(
             holding_amounts.get(c["symbol"], 0) * (c.get("price") or 0) for c in coins
         )
+        import triage
+
         for c, daily in zip(coins, daily_lists):
             h = heat_mod.compute_heat(c.get("rsi", 50), daily, c.get("news") or [])
             c["heat"] = h["score"]
@@ -435,15 +505,10 @@ async def digest(
             else:
                 c["weight_pct"] = None
 
-        # Lead with what's NOTABLE today: abnormal-vs-own-baseline coins first
-        # (the panic-killer wedge), heaviest holding breaking ties. A big holding
-        # behaving normally isn't "something to attend to" — an abnormal move is.
-        _dev_rank = {"abnormal": 2, "mild": 1, "normal": 0}
+        weighted = total_value > 0
+        n_coins = len(coins)
         coins.sort(
-            key=lambda c: (
-                _dev_rank.get((c.get("deviation") or {}).get("status"), 0),
-                c.get("weight_pct") or 0,
-            ),
+            key=lambda c: triage.coin_sort_key(c, weighted=weighted, n_coins=n_coins),
             reverse=True,
         )
 
@@ -473,7 +538,7 @@ async def digest(
         # digest until the bucket rolls over.
         if not result.get("degraded"):
             if total_value > 0:
-                db.set_digest_cache(user, bucket, payload)
+                db.set_digest_cache(user, weighted_cache_key, payload)
             else:
                 db.set_shared_digest_cache(shared_key, payload)
         if force:
@@ -519,21 +584,66 @@ class LinkKeysBody(BaseModel):
     secret_key: str
 
 
-@app.get("/api/config")
-def get_config():
-    """Retrieve backend configurations (e.g. trading environment)."""
+class BinanceNetworkBody(BaseModel):
+    use_testnet: Optional[bool] = None
+    mode: Optional[str] = None
+
+
+def _network_payload(user_id: str) -> dict:
+    mode = db.get_portfolio_mode(user_id)
+    use_testnet = mode == "testnet"
     return {
-        "is_mainnet": binance_trade.IS_MAINNET,
-        "base_url": binance_trade.BASE_URL
+        "portfolio_mode": mode,
+        "use_testnet": use_testnet,
+        "is_mainnet": False,
+        "base_url": binance_trade.base_url_for(use_testnet),
     }
+
+
+@app.get("/api/config")
+def get_config(x_user_id: Optional[str] = Header(None)):
+    """Retrieve backend configurations (e.g. trading environment)."""
+    if x_user_id:
+        return _network_payload(x_user_id)
+    return {
+        "portfolio_mode": "demo",
+        "is_mainnet": False,
+        "use_testnet": False,
+        "base_url": binance_trade.TESTNET_URL,
+    }
+
+
+@app.get("/api/account/network")
+def get_binance_network(x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    return _network_payload(user)
+
+
+@app.put("/api/account/network")
+def set_binance_network(body: BinanceNetworkBody, x_user_id: Optional[str] = Header(None)):
+    user = _require_user(x_user_id)
+    if body.mode in ("demo", "testnet"):
+        mode = body.mode
+    elif body.use_testnet is not None:
+        mode = "testnet" if body.use_testnet else "demo"
+    else:
+        raise HTTPException(status_code=400, detail="ระบุ mode เป็น demo หรือ testnet")
+    db.set_portfolio_mode(user, mode)
+    return {**_network_payload(user), "holdings": db.get_holdings(user)}
 
 
 @app.post("/api/account/keys")
 async def link_keys(body: LinkKeysBody, x_user_id: Optional[str] = Header(None)):
     if not x_user_id:
         raise HTTPException(status_code=400, detail="Missing user session ID (X-User-ID header).")
-    
-    is_valid, msg = await binance_trade.verify_api_key(body.api_key, body.secret_key)
+
+    if db.get_portfolio_mode(x_user_id) != "testnet":
+        raise HTTPException(status_code=400, detail="เชื่อม API ได้ในโหมด Testnet เท่านั้น")
+    is_valid, msg = await binance_trade.verify_api_key(
+        body.api_key,
+        body.secret_key,
+        mainnet=False,
+    )
     if not is_valid:
         raise HTTPException(status_code=400, detail=msg)
     
@@ -558,7 +668,10 @@ def unlink_keys(x_user_id: Optional[str] = Header(None)):
 
 @app.get("/api/account/keys/status")
 def get_keys_status(x_user_id: Optional[str] = Header(None)):
-    # 1. Per-user key linked in the vault takes precedence
+    mode = db.get_portfolio_mode(x_user_id) if x_user_id else "demo"
+    use_testnet = mode == "testnet"
+    mainnet = False
+
     api_key = None
     source = None
     if x_user_id:
@@ -566,19 +679,25 @@ def get_keys_status(x_user_id: Optional[str] = Header(None)):
         if keys:
             api_key, source = keys[0], "user"
 
-    # 2. Fall back to a shared demo key from the backend environment
-    if not api_key and binance_trade.env_keys_configured():
-        api_key, source = binance_trade.env_api_key(), "env"
+    if not api_key and binance_trade.env_keys_configured(x_user_id):
+        api_key, source = binance_trade.env_api_key(x_user_id), "env"
 
     if not api_key:
-        return {"linked": False}
+        return {
+            "linked": False,
+            "is_mainnet": mainnet,
+            "use_testnet": use_testnet,
+            "portfolio_mode": mode,
+        }
 
     masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "****"
     return {
         "linked": True,
         "api_key_masked": masked_key,
-        "is_mainnet": binance_trade.IS_MAINNET,
-        "source": source,  # "user" (linked in Settings) or "env" (shared demo)
+        "is_mainnet": mainnet,
+        "use_testnet": use_testnet,
+        "portfolio_mode": mode,
+        "source": source,
     }
 
 

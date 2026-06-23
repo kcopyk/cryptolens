@@ -9,6 +9,7 @@ import {
   fetchTicker24h,
   subscribeTickers,
 } from "@/lib/binance";
+import { INDICATOR_CANDLE_LIMIT, INDICATOR_INTERVAL } from "@/lib/api";
 import { computeAll, sparkline } from "@/lib/indicators";
 
 function mergeCoin(
@@ -68,7 +69,7 @@ export function useBinanceLive(backendCoins: Coin[] | null, symbols?: string[]) 
       activeSymbols.map(async (sym) => {
         try {
           const [klines, ticker] = await Promise.all([
-            fetchKlines(sym, "1h", 100),
+            fetchKlines(sym, INDICATOR_INTERVAL, INDICATOR_CANDLE_LIMIT),
             fetchTicker24h(sym),
           ]);
           const closes = klines.map((k) => k.close);

@@ -1,6 +1,66 @@
 # CryptoLens — Product Plan
 
-> **แผนปัจจุบัน: v2.0** (grill 2026-06-18) · v1.0 เก็บไว้ด้านล่างเป็น archive
+> **แผนปัจจุบัน: v3.0** (grill 2026-06-22) · v2.0 เก็บไว้ด้านล่างเป็น archive
+
+---
+
+# PLAN v3.0 — "position ฉันเสี่ยงไหมวันนี้" (2026-06-22)
+
+> เขียนจาก grill positioning + competitive landscape · **supersede v2.0** ในเรื่อง persona definition, wedge clarity, และ competitive context
+> v2.0 ยังอ้างอิงได้เรื่อง iron rules, business model, Radar — ส่วนที่ v3 ไม่ได้ทับ
+> **persona rev 2026-06-22:** retail trader รายย่อยที่กังวล (แทน passive holder / office worker)
+
+## หนึ่งประโยค
+
+**"บอกว่า position คุณเสี่ยงไหมวันนี้"** — triage ก่อน panic ตัดสินใจแทนคุณ ภาษาคน ไม่ต้องไถ chart รอบสอง
+
+## Persona (ชัดขึ้นจาก v2)
+
+**Retail trader รายย่อยที่ manage position เอง — กังวลเมื่อตลาดสวิง หลังข่าว หรือหลังเข้าไม้**
+
+- เทรด/ถือ position เอง ไม่ใช่ pro ไม่มี analyst — เปิดแอป **ตอนกังวล** (reactive) เป็นหลัก ไม่ใช่เฝ้าจอทั้งวัน
+- ถาม: "position ฉันเสี่ยงไหมวันนี้" · "เหรียญที่ถือขยับผิดปกติไหม" (A) · "มีข่าวที่ต้องจับตาไหม" (D)
+- ไม่ใช่ day trader / quant desk · ไม่ใช่คนรอ signal bot verdict ซื้อ/ขาย · ไม่ต้องการ P&L / tax / order ในแอป
+
+## Job หลัก (ล็อก)
+
+| คำถามที่ตอบ | ไม่ตอบ |
+|---|---|
+| "position ฉันเสี่ยงไหมวันนี้" (portfolio triage) | P&L / cost basis / tax |
+| "เหรียญที่ถือขยับผิดปกติไหม" (deviation A) | คำแนะนำซื้อ/ขาย |
+| "มีข่าวที่ต้องจับตาเกี่ยวกับเหรียญฉันไหม" (news D) | order execution |
+| "วันนี้ตลาดโดยรวมปกติไหม" (market mood) | signal buy/sell |
+
+## Competitive wedge vs CoinGecko (ข้อมูล เม.ย. 2026)
+
+CoinGecko launch AI features เมษายน 2026: Market Insights (AI summary จาก news+social), Portfolio Insights (P&L + allocation ข้าม wallet), Advanced Charts
+
+**สิ่งที่ CoinGecko ยังไม่มี = wedge เรา:**
+- **Deviation band** — "การเคลื่อนไหวนี้ผิดปกติไหม *เทียบกับ baseline ของเหรียญนั้นเอง* (z-score 30 วัน)" — CoinGecko บอกว่า "ขึ้น/ลงเพราะอะไร" แต่ไม่บอกว่า "ปกติหรือเปล่าสำหรับเหรียญนี้"
+- **Heat score พร้อม breakdown** — ตัวเลขเดียวบอก "ร้อนแค่ไหน" พร้อมแสดงที่มา (RSI + volatility percentile + news sentiment) → ตรวจสอบได้ ไม่ใช่กล่องดำ
+- **Digest นำด้วย "ต้องสนใจไหม"** — hero message คือ "วันนี้ปกติ ไม่มีอะไรต้องห่วง" (ดับ panic) ก่อนลงรายละเอียด
+
+สรุป: เราไม่แข่งด้าน "ข้อมูลมากกว่า" — แข่งด้าน **"บอกว่าต้องสนใจไหม" แบบ one-glance ภาษาคน**
+
+## ทางเลือกที่ retail trader ใช้อยู่ today (pain จริง)
+
+| ทางเลือก | จุดอ่อนสำหรับ persona เรา |
+|---|---|
+| Binance price alert | แจ้ง threshold ไม่บอก abnormal vs baseline · ไม่ rank ตาม position weight |
+| Signal group / X | Noise · FOMO/panic · กดดัน overtrade |
+| TradingView | Chart ลึก แต่ไม่ triage "position ไหนควรดูก่อน" แบบ glance |
+| CoinGecko AI | บอก "ขึ้น/ลงเพราะอะไร" ไม่ personalize abnormal ตาม holdings |
+
+## กติกาเหล็ก (สืบทอดจาก v2 — ไม่เปลี่ยน)
+
+1. ห้าม print "ควรซื้อ / ควรขาย / น่าซื้อ"
+2. Heat & deviation deterministic — LLM ห้ามมโนตัวเลข
+3. Digest ใส่บริบทได้ ห้ามสั่ง
+4. ไม่แตะเงินผู้ใช้ — deep-link Binance เท่านั้น
+
+---
+
+> **แผนก่อนหน้า: v2.0** (grill 2026-06-18) · เก็บไว้ด้านล่าง
 
 ---
 

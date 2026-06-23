@@ -22,6 +22,15 @@ def digest_shared_key(bucket: str, symbols: list[str]) -> str:
     return f"{bucket}:{','.join(sorted(symbols))}"
 
 
+def digest_holdings_key(bucket: str, holdings: list[dict]) -> str:
+    """Weighted digest cache key — changes when symbols or amounts change."""
+    parts = [
+        f"{h['symbol']}:{h['amount']:g}"
+        for h in sorted(holdings, key=lambda x: x["symbol"])
+    ]
+    return f"{bucket}:{'|'.join(parts)}"
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -62,6 +71,7 @@ def init_db() -> None:
                 user_id    TEXT NOT NULL,
                 symbol     TEXT NOT NULL,
                 amount     REAL NOT NULL,
+                avg_price  REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, symbol)
@@ -78,6 +88,13 @@ def init_db() -> None:
                 bucket  TEXT NOT NULL,
                 count   INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (user_id, bucket)
+            );
+
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id             TEXT PRIMARY KEY,
+                binance_use_testnet INTEGER NOT NULL DEFAULT 0,
+                portfolio_mode      TEXT NOT NULL DEFAULT 'demo',
+                updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
@@ -99,9 +116,86 @@ def init_db() -> None:
                     "UPDATE watchlist SET position = ? WHERE user_id = ? AND symbol = ?",
                     (i, uid, r["symbol"]),
                 )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(holding)").fetchall()]
+        if "avg_price" not in cols:
+            conn.execute("ALTER TABLE holding ADD COLUMN avg_price REAL")
+        settings_cols = [
+            r[1] for r in conn.execute("PRAGMA table_info(user_settings)").fetchall()
+        ]
+        if settings_cols and "portfolio_mode" not in settings_cols:
+            conn.execute(
+                "ALTER TABLE user_settings ADD COLUMN portfolio_mode TEXT NOT NULL DEFAULT 'demo'"
+            )
+            conn.execute(
+                """
+                UPDATE user_settings
+                SET portfolio_mode = CASE
+                    WHEN binance_use_testnet = 1 THEN 'testnet'
+                    ELSE 'demo'
+                END
+                """
+            )
         conn.commit()
     finally:
         conn.close()
+
+
+def _env_default_mainnet() -> bool:
+    return os.environ.get("ENABLE_BINANCE_MAINNET", "").lower() == "true"
+
+
+def get_portfolio_mode(user_id: str) -> str:
+    """demo = manual portfolio for presentation · testnet = + Binance Spot sync."""
+    init_db()
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT portfolio_mode, binance_use_testnet FROM user_settings WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return "demo"
+    mode = row["portfolio_mode"]
+    if mode in ("demo", "testnet"):
+        return mode
+    return "testnet" if row["binance_use_testnet"] else "demo"
+
+
+def get_binance_use_testnet(user_id: str) -> bool:
+    return get_portfolio_mode(user_id) == "testnet"
+
+
+def get_binance_mainnet(user_id: str) -> bool:
+    return False
+
+
+def set_portfolio_mode(user_id: str, mode: str) -> None:
+    if mode not in ("demo", "testnet"):
+        raise ValueError(f"Invalid portfolio mode: {mode}")
+    init_db()
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO user_settings (user_id, binance_use_testnet, portfolio_mode, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                binance_use_testnet = excluded.binance_use_testnet,
+                portfolio_mode = excluded.portfolio_mode,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, 1 if mode == "testnet" else 0, mode),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_binance_use_testnet(user_id: str, use_testnet: bool) -> None:
+    set_portfolio_mode(user_id, "testnet" if use_testnet else "demo")
 
 
 def _is_empty(conn: sqlite3.Connection, user_id: str) -> bool:
@@ -235,18 +329,24 @@ def reorder_watchlist(user_id: str, symbols: list[str]) -> None:
 # token/quota usage (same rationale as the watchlist cap).
 
 def get_holdings(user_id: str) -> list[dict]:
-    """Return the user's holdings as [{symbol, amount}], oldest-added first."""
+    """Return holdings as [{symbol, amount, avg_price?}], oldest-added first."""
     init_db()
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT symbol, amount FROM holding WHERE user_id = ? "
+            "SELECT symbol, amount, avg_price FROM holding WHERE user_id = ? "
             "ORDER BY created_at ASC, symbol ASC",
             (user_id,),
         ).fetchall()
     finally:
         conn.close()
-    return [{"symbol": r["symbol"], "amount": r["amount"]} for r in rows]
+    out = []
+    for r in rows:
+        item = {"symbol": r["symbol"], "amount": r["amount"]}
+        if r["avg_price"] is not None:
+            item["avg_price"] = r["avg_price"]
+        out.append(item)
+    return out
 
 
 def count_holdings(user_id: str) -> int:
@@ -261,7 +361,12 @@ def count_holdings(user_id: str) -> int:
     return int(row["n"])
 
 
-def upsert_holding(user_id: str, symbol: str, amount: float) -> None:
+def upsert_holding(
+    user_id: str,
+    symbol: str,
+    amount: float,
+    avg_price: Optional[float] = None,
+) -> None:
     """Add or update a held amount. Idempotent on (user, symbol)."""
     init_db()
     symbol = symbol.upper()
@@ -269,13 +374,50 @@ def upsert_holding(user_id: str, symbol: str, amount: float) -> None:
     try:
         conn.execute(
             """
-            INSERT INTO holding (user_id, symbol, amount, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO holding (user_id, symbol, amount, avg_price, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id, symbol)
-            DO UPDATE SET amount = excluded.amount, updated_at = CURRENT_TIMESTAMP
+            DO UPDATE SET
+                amount = excluded.amount,
+                avg_price = excluded.avg_price,
+                updated_at = CURRENT_TIMESTAMP
             """,
-            (user_id, symbol, amount),
+            (user_id, symbol, amount, avg_price),
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def replace_holdings(user_id: str, holdings: list[dict]) -> None:
+    """Replace all holdings (e.g. after Binance sync)."""
+    init_db()
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM holding WHERE user_id = ?", (user_id,))
+        for h in holdings:
+            conn.execute(
+                """
+                INSERT INTO holding (user_id, symbol, amount, avg_price, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    user_id,
+                    h["symbol"].upper(),
+                    h["amount"],
+                    h.get("avg_price"),
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_all_holdings(user_id: str) -> None:
+    init_db()
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM holding WHERE user_id = ?", (user_id,))
         conn.commit()
     finally:
         conn.close()
@@ -439,14 +581,14 @@ def force_refresh_remaining(user_id: str, bucket: str, max_per_hour: int = DIGES
 
 # ─── Per-user digest cache (portfolio-weighted digests) ─────────────────
 
-def get_digest_cache(user_id: str, bucket: str) -> Optional[dict]:
-    """Portfolio-weighted digest: at most one LLM call per user per UTC hour."""
+def get_digest_cache(user_id: str, cache_key: str) -> Optional[dict]:
+    """Portfolio-weighted digest cache keyed by bucket + holdings fingerprint."""
     init_db()
     conn = _connect()
     try:
         row = conn.execute(
             "SELECT payload FROM digest_cache WHERE user_id = ? AND day = ?",
-            (user_id, bucket),
+            (user_id, cache_key),
         ).fetchone()
     finally:
         conn.close()
@@ -458,7 +600,7 @@ def get_digest_cache(user_id: str, bucket: str) -> Optional[dict]:
         return None
 
 
-def set_digest_cache(user_id: str, bucket: str, payload: dict) -> None:
+def set_digest_cache(user_id: str, cache_key: str, payload: dict) -> None:
     init_db()
     conn = _connect()
     try:
@@ -469,9 +611,9 @@ def set_digest_cache(user_id: str, bucket: str, payload: dict) -> None:
             ON CONFLICT(user_id, day)
             DO UPDATE SET payload = excluded.payload, created_at = CURRENT_TIMESTAMP
             """,
-            (user_id, bucket, json.dumps(payload)),
+            (user_id, cache_key, json.dumps(payload)),
         )
-        # Keep the 48 most recent hourly buckets per user (~2 days).
+        # Keep the 48 most recent cache entries per user (~2 days).
         conn.execute(
             """
             DELETE FROM digest_cache

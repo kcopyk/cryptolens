@@ -1,6 +1,6 @@
 "use client";
 
-import { Coin, CoinHeat, formatPrice, formatVolume, macdTrend } from "@/lib/api";
+import { Coin, CoinHeat, formatPrice, formatVolume, macdTrend, INDICATOR_INTERVAL } from "@/lib/api";
 import Sparkline from "./Sparkline";
 import HeatBar from "./HeatBar";
 import DeviationBadge from "./DeviationBadge";
@@ -20,20 +20,20 @@ interface Props {
   onAsk: (coin: Coin) => void;
 }
 
-const RSI_LABEL_TH: Record<string, string> = {
-  overbought: "ซื้อมากเกิน",
-  strong: "แรง",
-  neutral: "เป็นกลาง",
-  weak: "อ่อนแรง",
-  oversold: "ขายมากเกิน",
+const RSI_LABEL: Record<string, string> = {
+  overbought: "Overbought",
+  strong: "Strong",
+  neutral: "Neutral",
+  weak: "Weak",
+  oversold: "Oversold",
 };
 
 function rsiLabel(rsi: number): { label: string; color: string } {
-  if (rsi >= 70) return { label: RSI_LABEL_TH.overbought, color: "text-coral" };
-  if (rsi >= 55) return { label: RSI_LABEL_TH.strong, color: "text-mint" };
-  if (rsi >= 45) return { label: RSI_LABEL_TH.neutral, color: "text-muted" };
-  if (rsi >= 30) return { label: RSI_LABEL_TH.weak, color: "text-coral/70" };
-  return { label: RSI_LABEL_TH.oversold, color: "text-mint" };
+  if (rsi >= 70) return { label: RSI_LABEL.overbought, color: "text-coral" };
+  if (rsi >= 55) return { label: RSI_LABEL.strong, color: "text-mint" };
+  if (rsi >= 45) return { label: RSI_LABEL.neutral, color: "text-muted" };
+  if (rsi >= 30) return { label: RSI_LABEL.weak, color: "text-coral/70" };
+  return { label: RSI_LABEL.oversold, color: "text-mint" };
 }
 
 /**
@@ -60,9 +60,9 @@ export default function CoinFactCard({
   const factChips: string[] = [];
   if (facts) {
     if (facts.drop_from_high_7d_pct != null && facts.drop_from_high_7d_pct <= -1) {
-      factChips.push(`ลง ${Math.abs(facts.drop_from_high_7d_pct)}% จากจุดสูง 7 วัน`);
+      factChips.push(`Down ${Math.abs(facts.drop_from_high_7d_pct)}% from 7-day high`);
     } else if (facts.gain_from_low_7d_pct != null && facts.gain_from_low_7d_pct >= 1) {
-      factChips.push(`ขึ้น ${facts.gain_from_low_7d_pct}% จากจุดต่ำ 7 วัน`);
+      factChips.push(`Up ${facts.gain_from_low_7d_pct}% from 7-day low`);
     }
   }
 
@@ -133,10 +133,12 @@ export default function CoinFactCard({
         <div className="h-12 rounded-xl bg-base/40 animate-pulse" />
       )}
 
-      {/* Indicator grid — reference card metrics */}
+      {/* Indicator grid — daily (1D), aligned with deviation/heat */}
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div className="flex flex-col gap-0.5">
-          <span className="text-muted uppercase tracking-wider text-[10px]">RSI 14</span>
+          <span className="text-muted uppercase tracking-wider text-[10px]">
+            RSI 14 · {INDICATOR_INTERVAL.toUpperCase()}
+          </span>
           <span className={`font-semibold tabular-nums ${rsiColor}`}>
             {coin.rsi} · {rsiLbl}
           </span>
@@ -158,7 +160,7 @@ export default function CoinFactCard({
                   indicators.ema_9 > indicators.ema_21 ? "text-mint" : "text-coral"
                 }`}
               >
-                {indicators.ema_9 > indicators.ema_21 ? "ขึ้น" : "ลง"}
+                {indicators.ema_9 > indicators.ema_21 ? "Bullish" : "Bearish"}
               </span>
             </div>
           </>

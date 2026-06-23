@@ -116,18 +116,18 @@ export default function ChatPanel({ coin, allCoins, onSelectCoin, onClose }: Pro
         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
           {messages.length === 0 && coin && (
             <p className="text-xs text-muted text-center mt-8 leading-relaxed px-2">
-              ถามเกี่ยวกับ <span className="text-ink font-semibold">{coin.symbol}</span> ได้เรื่อง RSI,
-              MACD, EMA, Bollinger Bands และข่าวล่าสุด
+              ถามเกี่ยวกับ <span className="text-ink font-semibold">{coin.symbol}</span> ได้ทุกเรื่อง —
+              สรุปข่าว, RSI/MACD/EMA/Bollinger, Heat, ผิดปกติไหม, ภาพรวมวันนี้
               <br />
-              เช่น &quot;MACD บอกอะไร?&quot; หรือ &quot;ข่าวอะไรทำให้ราคาขยับ?&quot;
+              เช่น &quot;สรุปข่าวล่าสุด&quot; · &quot;วันนี้ผิดปกติไหม?&quot; · &quot;RSI บอกอะไร?&quot;
             </p>
           )}
           {messages.map((m, i) => (
             <div
               key={i}
-              className={`text-[11px] leading-relaxed font-sans rounded-xl px-4 py-3 max-w-[90%] ${
+              className={`text-sm leading-relaxed font-sans rounded-xl px-4 py-3 max-w-[90%] whitespace-pre-line ${
                 m.role === "user"
-                  ? "bg-ink/6 text-ink self-end"
+                  ? "bg-ink/6 text-ink self-end text-[13px]"
                   : "bg-panel border border-line text-ink self-start"
               }`}
             >

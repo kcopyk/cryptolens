@@ -5,8 +5,8 @@
 > เกณฑ์เข้าที่นี่: ตก litmus test 4 ข้อใน `PLAN.md` ข้อใดข้อหนึ่ง
 
 ## product ปัจจุบันเสิร์ฟใคร (ไว้เทียบ)
-- **persona:** engaged retail holder — holder กังวล อยากเข้าใจ ไม่ใช่เทรดเดอร์
-- **wedge:** ดับ panic/FOMO ด้วยบริบท "ปกติ/ผิดปกติ" · ภาษาคน · หน้าเดียว glance จบ
+- **persona:** retail trader รายย่อยที่ manage position เอง — กังวลเมื่อสวิง/หลังเข้าไม้ · ไม่ใช่ day trader เฝ้าจอ · ไม่ใช่คนรอ signal verdict
+- **wedge:** triage ก่อน panic — บริบท "ปกติ/ผิดปกติ" personalize ตาม weight · ภาษาคน · glance จบ
 - **กติกาเหล็ก:** ไม่ verdict ซื้อ/ขาย · ไม่แตะเงินผู้ใช้
 
 ---

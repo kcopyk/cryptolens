@@ -1,6 +1,6 @@
 # CryptoLens
 
-An AI-native crypto **insight assistant** for people who already hold crypto but have no time to watch charts. Binance data + deterministic signals + free-tier LLM summaries, condensed into a single dark screen that answers one question: **"Do I need to pay attention to anything today?"**
+An AI-native crypto **insight assistant** for **retail traders** who manage their own positions and open the app when they're worried — not when they're glued to a chart all day. Binance data + deterministic signals + free-tier LLM summaries, condensed into a single dark screen that answers one question: **"Is my position at risk today — do I need to pay attention?"**
 
 It is **not** a trading terminal. We don't place orders or hold trade keys — when you want to act, we deep-link you out to Binance.
 

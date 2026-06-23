@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import logging
 from typing import Callable
@@ -6,6 +7,7 @@ from dotenv import load_dotenv
 
 import metrics
 import rate_limit
+import triage
 
 load_dotenv()
 
@@ -274,17 +276,145 @@ def _format_indicators(coin: dict) -> str:
     )
 
 
-def _format_news(coin: dict) -> str:
+def _format_news(coin: dict, *, limit: int = 5) -> str:
     news = coin.get("news") or []
     if not news:
-        return "- No recent news available"
+        return "- ไม่มีข่าวล่าสุดในระบบ"
     lines = []
-    for n in news[:5]:
+    for n in news[:limit]:
         sentiment = n.get("sentiment", "neutral")
         title = n.get("title", "")
         source = n.get("source", "")
-        lines.append(f"- [{sentiment}] {title}" + (f" ({source})" if source else ""))
+        pub = (n.get("published_at") or "")[:10]
+        meta = " · ".join(p for p in (source, pub) if p)
+        lines.append(f"- [{sentiment}] {title}" + (f" ({meta})" if meta else ""))
     return "\n".join(lines)
+
+
+def _format_heat_deviation(coin: dict) -> str:
+    lines: list[str] = []
+    heat = coin.get("heat")
+    if isinstance(heat, dict):
+        score = heat.get("score")
+        zone = heat.get("zone", "")
+        if score is not None:
+            lines.append(f"- Heat: {score}/100 ({zone}) — ระดับความร้อน/สุดโต่ง ไม่ใช่สัญญาณซื้อขาย")
+    elif heat is not None:
+        lines.append(f"- Heat: {heat}/100")
+
+    dev = coin.get("deviation") or {}
+    if dev.get("enough_data"):
+        _th = {"abnormal": "ผิดปกติชัด", "mild": "เริ่มผิดปกติ", "normal": "ปกติ"}
+        status = _th.get(dev.get("status"), dev.get("status", "normal"))
+        z = dev.get("z")
+        z_str = f"{z:+.2f}" if z is not None else "N/A"
+        today = dev.get("today_return_pct")
+        today_str = f"{today:+.2f}%" if today is not None else "N/A"
+        lines.append(
+            f"- Deviation: วันนี้ {today_str} = {status} "
+            f"(z={z_str}, กรอบปกติ {dev.get('normal_low_pct'):+.1f}..{dev.get('normal_high_pct'):+.1f}%/วัน)"
+        )
+
+    facts = coin.get("facts") or {}
+    if facts.get("drop_from_high_7d_pct") is not None:
+        lines.append(f"- จากจุดสูง 7 วัน: {facts['drop_from_high_7d_pct']:+.2f}%")
+    if facts.get("gain_from_low_7d_pct") is not None:
+        lines.append(f"- จากจุดต่ำ 7 วัน: {facts['gain_from_low_7d_pct']:+.2f}%")
+    nb, nr = facts.get("news_bullish"), facts.get("news_bearish")
+    if nb is not None or nr is not None:
+        lines.append(f"- ข่าวทิศทาง: bullish {nb or 0} · bearish {nr or 0}")
+
+    return "\n".join(lines) if lines else "- ไม่มี Heat/Deviation ใน snapshot นี้"
+
+
+def _is_thai(text: str) -> bool:
+    return any("\u0e00" <= ch <= "\u0e7f" for ch in text)
+
+
+def _ask_max_tokens(question: str) -> int:
+    q = question.lower()
+    kind = _classify_ask_question(question)
+    if kind == "news":
+        return 480
+    if kind == "overview":
+        return 400
+    if kind in ("indicators", "status"):
+        return 360
+    return 320
+
+
+def _classify_ask_question(question: str) -> str:
+    q = question.lower()
+    if any(k in q for k in ("ข่าว", "news", "headline", "headlines")):
+        return "news"
+    if any(k in q for k in ("rsi", "macd", "ema", "bollinger", "ตัวชี้วัด", "indicator")):
+        return "indicators"
+    if any(k in q for k in ("ผิดปกติ", "deviation", "heat", "ร้อน", "เย็น")):
+        return "status"
+    if any(k in q for k in ("ภาพรวม", "overview", "สรุป", "วันนี้", "เป็นไง", "เป็นยังไง", "how is")):
+        return "overview"
+    return "general"
+
+
+_SENTIMENT_TH = {"bullish": "เชิงบวก", "bearish": "เชิงลบ", "neutral": "กลาง"}
+
+
+def _ask_style_rules(kind: str) -> str:
+    base = (
+        "รูปแบบ (บังคับ):\n"
+        "- ข้อความ plain text เท่านั้น — ห้าม markdown ทุกชนิด (ไม่มี **, *, #, ```)\n"
+        "- ห้ามทักทาย/ลากท้าย (ไม่มี 'สวัสดี', 'หวังว่า', 'บอกได้ถ้า')\n"
+        "- ตอบตรงคำถามก่อน — อย่า copy รายการ snapshot ทั้งก้อน\n"
+        "- ใช้ภาษาคนธรรมดา อ่านง่าย เหมือนคุยกับเพื่อน\n"
+        "- แปล sentiment เป็นภาษาไทย: bullish=เชิงบวก, bearish=เชิงลบ, neutral=กลาง\n"
+        "- ห้ามโชว์ z-score / percentile ยกเว้นผู้ใช้ถามเชิงเทคนิคโดยตรง\n"
+    )
+    templates = {
+        "news": (
+            "โครงสร้างสำหรับคำถามข่าว:\n"
+            "บรรทัดแรก: สรุปอารมณ์ข่าวรวม 1 ประโยค\n"
+            "จากนั้นแต่ละข่าว 1 บรรทัด ขึ้นต้นด้วย ·\n"
+            "  · [เชิงลบ/เชิงบวก/กลาง] หัวข้อ — สรุปสั้น ๆ (แหล่ง)\n"
+            "ไม่ต้องใส่ราคา/RSI ถ้าไม่เกี่ยวกับข่าว"
+        ),
+        "overview": (
+            "โครงสร้างสำหรับภาพรวม:\n"
+            "บรรทัดแรก: สรุปภาพรวมวันนี้ 1 ประโยค (ปกติ/ผิดปกติ + ทิศทาง)\n"
+            "บรรทัดถัดไป 2–4 bullet · เท่านั้น เลือกเฉพาะที่สำคัญ:\n"
+            "  · ราคา + 24h%\n"
+            "  · สถานะ deviation ภาษาคน (ไม่ใช้ z-score)\n"
+            "  · ข่าวเด่น 1–2 เรื่องถ้ามี\n"
+            "ห้ามใส่ volume/Heat ถ้าไม่ช่วยตอบคำถาม"
+        ),
+        "indicators": (
+            "โครงสร้างสำหรับตัวชี้วัด:\n"
+            "อธิบายเฉพาะตัวที่ถาม — 1–2 ประโยคต่อตัว\n"
+            "ใส่ตัวเลขจริงจาก snapshot · แปลเป็นภาษาคน (เช่น RSI 52 = เป็นกลาง)"
+        ),
+        "status": (
+            "โครงสร้างสำหรับสถานะ/Heat/Deviation:\n"
+            "ตอบว่า 'ปกติ/เริ่มผิดปกติ/ผิดปกติชัด' ภาษาคน + เหตุผลจากตัวเลข\n"
+            "Heat = บอกว่าร้อน/เย็นแค่ไหน ไม่ใช่สัญญาณซื้อขาย"
+        ),
+        "general": (
+            "ตอบสั้น กระชับ 2–4 ประโยค ใช้เฉพาะข้อมูลที่เกี่ยวกับคำถาม"
+        ),
+    }
+    return base + templates.get(kind, templates["general"])
+
+
+def _clean_ask_response(text: str) -> str:
+    """Strip markdown the chat UI can't render — keeps plain readable text."""
+    text = text.strip()
+    text = re.sub(r"```[^\n]*\n?", "", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", text)
+    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-•]\s*\*\s*", "· ", text, flags=re.MULTILINE)
+    text = re.sub(r"^(สวัสดี[^\n]*[!?\n]\s*)", "", text)
+    text = re.sub(r"^(Hello[^\n]*[!?\n]\s*)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def summarize_coin(coin: dict) -> str:
@@ -349,53 +479,7 @@ def _market_direction(coins: list[dict]) -> str:
 
 def _verdict_fallback(coins: list[dict], weighted: bool) -> tuple[str, str, str, str]:
     """Deterministic attention verdict from deviation + market direction."""
-    abnormal = [c for c in coins if (c.get("deviation") or {}).get("status") == "abnormal"]
-    mild = [c for c in coins if (c.get("deviation") or {}).get("status") == "mild"]
-    scope = "พอร์ตคุณ" if weighted else "ตลาดวันนี้"
-    direction = _market_direction(coins)
-
-    if abnormal:
-        syms = ", ".join(c["symbol"] for c in abnormal[:3])
-        prefix = "พอร์ตคุณมี" if weighted else "มี"
-        verdict = f"{prefix} {len(abnormal)} เหรียญผิดปกติ — {syms}"
-        level = "abnormal"
-    elif mild:
-        syms = ", ".join(c["symbol"] for c in mild[:3])
-        prefix = "พอร์ตคุณมี" if weighted else "มี"
-        verdict = f"{prefix} {len(mild)} เหรียญเริ่มผิดปกติ — {syms}"
-        level = "mild"
-    elif direction == "down":
-        verdict = f"{scope}ลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง"
-        level = "normal"
-    elif direction == "up":
-        verdict = f"{scope}ขึ้นและยังอยู่ในกรอบปกติ — ไม่ต้องห่วง"
-        level = "normal"
-    elif direction == "mixed":
-        verdict = f"{scope}ผสม — ยังอยู่ในกรอบปกติ"
-        level = "normal"
-    else:
-        verdict = f"{scope}ปกติ — ไม่ต้องห่วง"
-        level = "normal"
-
-    if level == "normal":
-        avg_24h = sum(c.get("change_24h_pct", 0) for c in coins) / len(coins)
-        if direction == "down":
-            narrative = (
-                f"ทุกเหรียญลงเฉลี่ย {avg_24h:.1f}% (24h) "
-                f"แต่ยังอยู่ในกรอบปกติ 30 วัน — ไม่ใช่การขยับผิดปกติ"
-            )
-        elif direction == "up":
-            narrative = (
-                f"เหรียญหลักขึ้นเฉลี่ย {avg_24h:+.1f}% (24h) "
-                f"และยังอยู่ในกรอบปกติ 30 วัน"
-            )
-        else:
-            syms = ", ".join(c["symbol"] for c in coins)
-            narrative = f"{syms} ยังเคลื่อนไหวอยู่ในกรอบปกติ 30 วัน"
-    else:
-        narrative = ""
-
-    return verdict, narrative, level, direction
+    return triage.portfolio_verdict(coins, weighted)
 
 
 def daily_digest(coins: list[dict]) -> dict:
@@ -454,7 +538,7 @@ def daily_digest(coins: list[dict]) -> dict:
     if weighted:
         verdict_hint = (
             "<1 บรรทัด — ต้องเล่า 'ทิศทาง' (ลง/ขึ้น/ผสม) คู่กับ 'ต้องจับตาไหม' "
-            "เช่น 'พอร์ตลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง' หรือ 'พอร์ตมี ETH ผิดปกติ'>"
+            "เช่น 'พอร์ตลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง' หรือ 'พอร์ตมี 1 เหรียญควรดู — ETH'>"
         )
     else:
         verdict_hint = (
@@ -482,7 +566,7 @@ def daily_digest(coins: list[dict]) -> dict:
         "ห้ามแต่งราคา/ตัวเลข/ข่าวที่ไม่ได้ใหมา\n"
         "สำคัญ: VERDICT = attention verdict (ต้องจับตาไหม) ไม่ใช่คำสั่งซื้อ/ขาย\n"
         "  - ต้องเล่าทิศทางตลาด (ลง/ขึ้น/ผสม) คู่กับความผิดปกติเสมอ\n"
-        "  - อนุญาต: 'ลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง', 'มี X ผิดปกติ — จับตา'\n"
+        "  - อนุญาต: 'ลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง', 'มี X เหรียญควรดู — จับตา'\n"
         "  - ห้าม: 'ควรซื้อ', 'ควรขาย', 'น่าสะสม', 'เข้าซื้อ', 'ออกขาย'\n"
         "Heat = ระดับความ 'ร้อน/สุดโต่ง' (0-100) ไม่ใช่ความน่าซื้อ\n"
         "ใช้สถานะ 'ปกติ/เริ่มผิดปกติ/ผิดปกติชัด' (เทียบกรอบ 30 วัน) เป็นตัวจัดลำดับ\n\n"
@@ -492,7 +576,9 @@ def daily_digest(coins: list[dict]) -> dict:
         f"NARRATIVE: {narrative_hint}\n"
         "MOOD: <1 บรรทัดสั้น ๆ อารมณ์ตลาดโดยรวม เช่น 'mixed — BTC นิ่ง ETH แรง'>\n"
         + "\n".join(f"{c['symbol']}: <1-2 ประโยค อะไรขยับและทำไม อิงข่าว/ตัวเลขจริง>" for c in coins)
-        + "\n\nกฎ: อ้างตัวเลขจริง, ภาษาง่ายเหมาะมือใหม่, "
+        + "\n\nกฎ PER_COIN: ถ้าอ้าง % การขยับ ต้องใช้ '24h X%' จากบรรทัด 24h หรือ 'วันนี้ Y%' จาก deviation "
+        "และระบุคำว่า '24h' หรือ 'วันนี้' นำหน้าตัวเลขเสมอ — ห้ามสลับสองค่านี้\n"
+        "กฎ: อ้างตัวเลขจริง, ภาษาง่ายเหมาะมือใหม่, "
         + weight_rule
         + "ห้ามให้คำแนะนำซื้อ/ขาย — แค่เล่าว่าเกิดอะไรขึ้นและรุนแรงแค่ไหน"
     )
@@ -546,14 +632,14 @@ def daily_digest(coins: list[dict]) -> dict:
             mood = ""
 
     level = fb_level
-    if "ผิดปกติชัด" in verdict or "ผิดปกติ" in verdict and "เริ่ม" not in verdict:
-        if any((c.get("deviation") or {}).get("status") == "abnormal" for c in coins):
+    if any(
+        phrase in verdict
+        for phrase in ("ควรดู", "ผิดปกติร่วม", "ผิดปกติชัด")
+    ):
+        if triage.hero_abnormal_coins(coins, weighted) or "ผิดปกติร่วม" in verdict:
             level = "abnormal"
-    if "เริ่มผิดปกติ" in verdict or level == "mild":
-        if any((c.get("deviation") or {}).get("status") == "mild" for c in coins) and level != "abnormal":
-            level = "mild"
-    if "ปกติ" in verdict or "ไม่ต้องห่วง" in verdict:
-        if not any((c.get("deviation") or {}).get("status") in ("abnormal", "mild") for c in coins):
+    if "ปกติ" in verdict or "ไม่ต้องห่วง" in verdict or "ไม่ต้องรีบ" in verdict:
+        if not triage.hero_abnormal_coins(coins, weighted):
             level = "normal"
 
     overview = narrative if narrative else verdict
@@ -572,18 +658,69 @@ def daily_digest(coins: list[dict]) -> dict:
 
 
 def ask_coin(coin_snapshot: dict, question: str) -> str:
+    lang = "ภาษาไทย" if _is_thai(question) else "the same language as the question"
+    kind = _classify_ask_question(question)
+    sym = coin_snapshot["symbol"]
+    summary = (coin_snapshot.get("summary") or "").strip()
+    summary_block = f"\nสรุปก่อนหน้า: {summary}\n" if summary else ""
+
     prompt = (
-        f"You are answering a question about {coin_snapshot['symbol']} for a crypto beginner.\n"
-        f"Use ONLY this snapshot data (do not fetch or infer anything else):\n"
-        f"- Price: ${coin_snapshot['price']:,.2f}\n"
-        f"- 24h change: {coin_snapshot['change_24h_pct']:+.2f}%\n"
-        f"- 24h volume: ${coin_snapshot['volume_24h']:,.0f}\n"
-        f"{_format_indicators(coin_snapshot)}\n\n"
-        f"Recent news:\n{_format_news(coin_snapshot)}\n\n"
-        f"- AI summary: {coin_snapshot['summary']}\n\n"
-        f"Question: {question}\n\n"
-        f"Answer in 2–4 sentences. Keep language beginner-friendly. "
-        f"Use indicators (RSI, MACD, EMA, Bollinger) and news to explain WHY price may be moving. "
-        f"If the answer requires data not in the snapshot, say so clearly."
+        f"คุณเป็นผู้ช่วยอธิบายคริปโตให้คนถือเหรียญ — ตอบคำถามเกี่ยวกับ {sym}\n"
+        f"ใช้เฉพาะข้อมูล snapshot ด้านล่าง (ห้ามแต่งราคา/ข่าว/ตัวเลขที่ไม่ได้ใหมา)\n\n"
+        f"[SNAPSHOT]\n"
+        f"ราคา ${coin_snapshot['price']:,.2f} · 24h {coin_snapshot['change_24h_pct']:+.2f}% · "
+        f"volume ${coin_snapshot['volume_24h']:,.0f}\n"
+        f"{_format_indicators(coin_snapshot)}\n"
+        f"{_format_heat_deviation(coin_snapshot)}\n"
+        f"ข่าว ({len(coin_snapshot.get('news') or [])} หัว):\n"
+        f"{_format_news(coin_snapshot, limit=10)}"
+        f"{summary_block}\n"
+        f"คำถาม: {question}\n"
+        f"ประเภทคำถาม: {kind}\n\n"
+        f"กฎ:\n"
+        f"- ตอบเป็น{lang}\n"
+        f"- ห้าม: 'ควรซื้อ', 'ควรขาย', 'น่าสะสม', buy/sell\n"
+        f"- ข้อมูลไม่พอ → บอกตรง ๆ\n"
+        f"{_ask_style_rules(kind)}"
     )
-    return complete(prompt, max_tokens=300, op="ask_coin")
+    raw = complete(prompt, max_tokens=_ask_max_tokens(question), op="ask_coin")
+    return _clean_ask_response(raw)
+
+
+_DEV_TH = {"abnormal": "ผิดปกติชัด", "mild": "เริ่มผิดปกติ", "normal": "ปกติ"}
+
+
+def ask_coin_fallback(coin_snapshot: dict, question: str) -> str:
+    """Deterministic plain-text answer from the snapshot — no LLM.
+
+    Served when every provider is exhausted so /api/ask degrades to real facts
+    instead of a 502 / blank chat (same principle as the digest's triage
+    fallback). It only restates numbers already in the snapshot, so it can never
+    hallucinate or give a buy/sell verdict.
+    """
+    sym = coin_snapshot["symbol"]
+    kind = _classify_ask_question(question)
+    lines = [f"ตอนนี้ผู้ช่วย AI ไม่พร้อมตอบ — สรุปจากข้อมูลล่าสุดของ {sym} ให้แทน:"]
+
+    if kind == "news":
+        lines.append(_format_news(coin_snapshot, limit=5))
+    elif kind == "indicators":
+        lines.append(_format_indicators(coin_snapshot))
+    else:
+        lines.append(
+            f"· ราคา ${coin_snapshot['price']:,.2f} · 24h "
+            f"{coin_snapshot['change_24h_pct']:+.2f}%"
+        )
+        dev = coin_snapshot.get("deviation") or {}
+        if dev.get("enough_data"):
+            lines.append(
+                f"· วันนี้ {dev.get('today_return_pct'):+.2f}% = "
+                f"{_DEV_TH.get(dev.get('status'), dev.get('status'))} "
+                f"(เทียบกรอบปกติ 30 วัน)"
+            )
+        heat = coin_snapshot.get("heat")
+        score = heat.get("score") if isinstance(heat, dict) else heat
+        if score is not None:
+            lines.append(f"· Heat {score}/100 — ระดับความร้อน ไม่ใช่สัญญาณซื้อขาย")
+
+    return "\n".join(l for l in lines if l).strip()

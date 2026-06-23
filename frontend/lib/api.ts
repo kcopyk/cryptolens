@@ -96,6 +96,10 @@ export type ChartInterval = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
 export const CHART_CANDLE_LIMIT = 1000;
 
+/** Shared timeframe for card indicators + default chart — keeps RSI/MACD/EMA aligned. */
+export const INDICATOR_INTERVAL: ChartInterval = "1d";
+export const INDICATOR_CANDLE_LIMIT = CHART_CANDLE_LIMIT;
+
 export const CHART_INTERVALS: { value: ChartInterval; label: string }[] = [
   { value: "1m", label: "1m" },
   { value: "5m", label: "5m" },
@@ -267,61 +271,88 @@ export function inferMarketDirection(coins: DigestCoin[]): MarketDirection {
   return "mixed";
 }
 
+/** Mirror backend/triage.py — keep in sync when changing false-alarm gates. */
+const HERO_ATTENTION_MIN = 40;
+const MACRO_ABNORMAL_RATIO = 0.75;
+const MARKET_DOWN_AVG_PCT = -2;
+
+function attentionScore(coin: DigestCoin, weighted: boolean, nCoins: number): number {
+  const z = Math.abs(coin.deviation?.z ?? 0);
+  const w = coin.weight_pct;
+  if (weighted && w != null) return z * w;
+  return z * (100 / Math.max(nCoins, 1));
+}
+
+function isHeroAbnormal(coin: DigestCoin, weighted: boolean, nCoins: number): boolean {
+  if (coin.deviation?.status !== "abnormal") return false;
+  return attentionScore(coin, weighted, nCoins) >= HERO_ATTENTION_MIN;
+}
+
+function heroAbnormalCoins(coins: DigestCoin[], weighted: boolean): DigestCoin[] {
+  const n = coins.length;
+  return coins.filter((c) => isHeroAbnormal(c, weighted, n));
+}
+
+function isMacroAbnormal(coins: DigestCoin[]): boolean {
+  const abnormal = coins.filter((c) => c.deviation?.status === "abnormal");
+  if (abnormal.length < coins.length * MACRO_ABNORMAL_RATIO) return false;
+  const dirs = new Set(abnormal.map((c) => c.deviation?.direction).filter((d) => d && d !== "flat"));
+  return dirs.size <= 1;
+}
+
 /** Client-side fallback when cached digest lacks a structured verdict. */
 export function inferVerdictFromCoins(
   coins: DigestCoin[],
   weighted?: boolean
 ): { verdict: string; level: VerdictLevel; direction: MarketDirection; narrative: string } {
-  const abnormal = coins.filter((c) => c.deviation?.status === "abnormal");
-  const mild = coins.filter((c) => c.deviation?.status === "mild");
   const scope = weighted ? "พอร์ตคุณ" : "ตลาดวันนี้";
   const direction = inferMarketDirection(coins);
+  const avg24h = coins.reduce((s, c) => s + c.change_24h_pct, 0) / coins.length;
+  const hero = heroAbnormalCoins(coins, !!weighted);
+  const macro = hero.length > 0 && isMacroAbnormal(coins);
 
-  if (abnormal.length) {
-    const syms = abnormal
-      .map((c) => c.symbol)
-      .slice(0, 3)
-      .join(", ");
+  if (hero.length) {
+    if (macro) {
+      const move = direction === "down" ? "ลง" : direction === "up" ? "ขึ้น" : "แกว่ง";
+      return {
+        verdict: `${scope}ผิดปกติร่วม — ${move}ทั้งก้อน`,
+        level: "abnormal",
+        direction,
+        narrative:
+          "ทุกเหรียญขยับผิดกรอบปกติพร้อมกัน — เป็นเหตุตลาดร่วม ไม่ใช่แค่เหรียญเดียว · ไม่ใช่คำแนะนำให้ขาย",
+      };
+    }
+    const syms = hero.map((c) => c.symbol).slice(0, 3).join(", ");
     const prefix = weighted ? "พอร์ตคุณมี" : "มี";
+    const hasDown = hero.some((c) => c.deviation?.direction === "down");
     return {
-      verdict: `${prefix} ${abnormal.length} เหรียญผิดปกติ — ${syms}`,
+      verdict: `${prefix} ${hero.length} เหรียญควรดู — ${syms}`,
       level: "abnormal",
       direction,
-      narrative: "",
-    };
-  }
-  if (mild.length) {
-    const syms = mild
-      .map((c) => c.symbol)
-      .slice(0, 3)
-      .join(", ");
-    const prefix = weighted ? "พอร์ตคุณมี" : "มี";
-    return {
-      verdict: `${prefix} ${mild.length} เหรียญเริ่มผิดปกติ — ${syms}`,
-      level: "mild",
-      direction,
-      narrative: "",
+      narrative: hasDown
+        ? "เหรียญที่ highlight ลงแรงสำหรับตัวมันเอง — ไม่ใช่คำแนะนำให้ขาย · ดูรายละเอียดด้านล่าง"
+        : "เหรียญที่ highlight ขยับผิดกรอบปกติของตัวเอง — ดูรายละเอียดด้านล่าง",
     };
   }
 
-  const avg24h = coins.reduce((s, c) => s + c.change_24h_pct, 0) / coins.length;
   let verdict: string;
-  if (direction === "down") {
-    verdict = `${scope}ลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง`;
-  } else if (direction === "up") {
-    verdict = `${scope}ขึ้นและยังอยู่ในกรอบปกติ — ไม่ต้องห่วง`;
-  } else if (direction === "mixed") {
-    verdict = `${scope}ผสม — ยังอยู่ในกรอบปกติ`;
-  } else {
-    verdict = `${scope}ปกติ — ไม่ต้องห่วง`;
-  }
-
   let narrative: string;
   if (direction === "down") {
-    narrative = `ทุกเหรียญลงเฉลี่ย ${avg24h.toFixed(1)}% (24h) แต่ยังอยู่ในกรอบปกติ 30 วัน — ไม่ใช่การขยับผิดปกติ`;
+    if (avg24h <= MARKET_DOWN_AVG_PCT) {
+      verdict = `${scope}ลงร่วมตลาด · ยังไม่ผิดปกติเทียบกรอบแต่ละเหรียญ`;
+      narrative = `เฉลี่ยลง ${avg24h.toFixed(1)}% (24h) — ยังอยู่ในกรอบปกติ 30 วัน · ไม่ต้องรีบทำอะไร`;
+    } else {
+      verdict = `${scope}ลงแต่ยังอยู่ในกรอบปกติ — ไม่ต้องห่วง`;
+      narrative = `ทุกเหรียญลงเฉลี่ย ${avg24h.toFixed(1)}% (24h) แต่ยังอยู่ในกรอบปกติ 30 วัน — ไม่ใช่การขยับผิดปกติ`;
+    }
   } else if (direction === "up") {
+    verdict = `${scope}ขึ้นและยังอยู่ในกรอบปกติ — ไม่ต้องห่วง`;
     narrative = `เหรียญหลักขึ้นเฉลี่ย ${avg24h >= 0 ? "+" : ""}${avg24h.toFixed(1)}% (24h) และยังอยู่ในกรอบปกติ 30 วัน`;
+  } else if (direction === "mixed") {
+    verdict = `${scope}ผสม — ยังอยู่ในกรอบปกติ`;
+    narrative = `${coins.map((c) => c.symbol).join(", ")} ยังเคลื่อนไหวอยู่ในกรอบปกติ 30 วัน`;
   } else {
+    verdict = `${scope}ปกติ — ไม่ต้องห่วง`;
     narrative = `${coins.map((c) => c.symbol).join(", ")} ยังเคลื่อนไหวอยู่ในกรอบปกติ 30 วัน`;
   }
 
@@ -406,9 +437,9 @@ export interface CoinHeat {
 
 /** Plain-language status label — context, never a verdict (PLAN iron rule §3/§4). */
 export function deviationLabel(status: DeviationStatus): string {
-  if (status === "abnormal") return "ผิดปกติชัด";
-  if (status === "mild") return "เริ่มผิดปกติ";
-  return "ปกติ";
+  if (status === "abnormal") return "Abnormal";
+  if (status === "mild") return "Mild";
+  return "Normal";
 }
 
 export interface HeatResponse {
@@ -423,11 +454,11 @@ export async function fetchHeat(symbols: string[]): Promise<HeatResponse> {
   return r.json();
 }
 
-/** Thai zone label — intensity only, never buy/sell (PLAN iron rule §3). */
+/** Zone label — intensity only, never buy/sell (PLAN iron rule §3). */
 export function heatZoneLabel(zone: HeatZone): string {
-  if (zone === "hot") return "ร้อนเกิน";
-  if (zone === "mid") return "กลาง";
-  return "เย็น";
+  if (zone === "hot") return "Hot";
+  if (zone === "mid") return "Mid";
+  return "Cold";
 }
 
 // ─── Manual holdings (PLAN milestone 1) ───────────────────────────────
@@ -435,6 +466,7 @@ export function heatZoneLabel(zone: HeatZone): string {
 export interface Holding {
   symbol: string;
   amount: number;
+  avg_price?: number | null;
 }
 
 export async function fetchHoldings(): Promise<Holding[]> {
@@ -453,14 +485,35 @@ async function holdingError(r: Response): Promise<never> {
   }
 }
 
-export async function upsertHolding(symbol: string, amount: number): Promise<Holding[]> {
+export async function upsertHolding(
+  symbol: string,
+  amount: number,
+  avgPrice?: number | null
+): Promise<Holding[]> {
+  const body: { symbol: string; amount: number; avg_price?: number } = {
+    symbol: symbol.toUpperCase(),
+    amount,
+  };
+  if (avgPrice != null && Number.isFinite(avgPrice) && avgPrice > 0) {
+    body.avg_price = avgPrice;
+  }
   const r = await fetch(`${API}/api/holdings`, {
     method: "POST",
     headers: { ...getHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ symbol: symbol.toUpperCase(), amount }),
+    body: JSON.stringify(body),
   });
   if (!r.ok) await holdingError(r);
   return (await r.json()).holdings ?? [];
+}
+
+export async function syncHoldingsFromBinance(): Promise<{ holdings: Holding[]; synced: number }> {
+  const r = await fetch(`${API}/api/holdings/sync-binance`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!r.ok) await holdingError(r);
+  const data = await r.json();
+  return { holdings: data.holdings ?? [], synced: data.synced ?? 0 };
 }
 
 export async function removeHolding(symbol: string): Promise<Holding[]> {
@@ -586,7 +639,13 @@ export async function deleteBinanceKeys(): Promise<any> {
   return r.json();
 }
 
-export async function getBinanceKeysStatus(): Promise<{ linked: boolean; api_key_masked?: string; is_mainnet?: boolean }> {
+export async function getBinanceKeysStatus(): Promise<{
+  linked: boolean;
+  api_key_masked?: string;
+  is_mainnet?: boolean;
+  use_testnet?: boolean;
+  portfolio_mode?: "demo" | "testnet";
+}> {
   const r = await fetch(`${API}/api/account/keys/status`, {
     cache: "no-store",
     headers: getHeaders(),
@@ -595,10 +654,61 @@ export async function getBinanceKeysStatus(): Promise<{ linked: boolean; api_key
   return r.json();
 }
 
-export async function getBackendConfig(): Promise<{ is_mainnet: boolean; base_url: string }> {
-  const r = await fetch(`${API}/api/config`, { cache: "no-store" });
+export async function getBackendConfig(): Promise<{
+  is_mainnet: boolean;
+  use_testnet?: boolean;
+  base_url: string;
+}> {
+  const r = await fetch(`${API}/api/config`, { cache: "no-store", headers: getHeaders() });
   if (!r.ok) throw new Error(`config ${r.status}`);
   return r.json();
+}
+
+export async function fetchBinanceNetwork(): Promise<{
+  portfolio_mode: "demo" | "testnet";
+  use_testnet: boolean;
+  is_mainnet: boolean;
+  base_url: string;
+  holdings?: Holding[];
+}> {
+  const r = await fetch(`${API}/api/account/network`, { cache: "no-store", headers: getHeaders() });
+  if (!r.ok) throw new Error(`network ${r.status}`);
+  return r.json();
+}
+
+export async function setPortfolioMode(
+  mode: "demo" | "testnet"
+): Promise<{
+  portfolio_mode: "demo" | "testnet";
+  use_testnet: boolean;
+  is_mainnet: boolean;
+  base_url: string;
+  holdings?: Holding[];
+}> {
+  const r = await fetch(`${API}/api/account/network`, {
+    method: "PUT",
+    headers: { ...getHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!r.ok) {
+    const errText = await r.text();
+    try {
+      throw new Error(JSON.parse(errText).detail || `network ${r.status}`);
+    } catch (e) {
+      if (e instanceof Error && e.message !== errText) throw e;
+      throw new Error(errText || `network ${r.status}`);
+    }
+  }
+  return r.json();
+}
+
+/** @deprecated use setPortfolioMode */
+export async function setBinanceNetwork(useTestnet: boolean): Promise<{
+  use_testnet: boolean;
+  is_mainnet: boolean;
+  base_url: string;
+}> {
+  return setPortfolioMode(useTestnet ? "testnet" : "demo");
 }
 
 export function formatPrice(p: number): string {

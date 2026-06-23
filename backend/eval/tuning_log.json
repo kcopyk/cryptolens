@@ -14,10 +14,25 @@
     "out_of_sample_validation": {
       "validated_at": "2026-06-19",
       "windows": {
-        "2023-01-01..2026": {"calm_accuracy": 0.895, "spike_recall": 0.877, "ranking_accuracy": 0.865, "passed": true, "round": "round-005"},
-        "2022-01-01..2026": {"calm_accuracy": 0.891, "spike_recall": 0.841, "ranking_accuracy": 0.861, "passed": false, "round": "round-006"}
+        "2023-01-01..2026": {
+          "calm_accuracy": 0.895,
+          "spike_recall": 0.877,
+          "ranking_accuracy": 0.865,
+          "passed": true,
+          "round": "round-005"
+        },
+        "2022-01-01..2026": {
+          "calm_accuracy": 0.891,
+          "spike_recall": 0.841,
+          "ranking_accuracy": 0.861,
+          "passed": false,
+          "round": "round-006"
+        }
       },
-      "sanity_crashes_flagged": {"2022-05-09 Luna/UST": "abnormal-down (all coins)", "2022-11-09 FTX": "abnormal-down (all coins)"},
+      "sanity_crashes_flagged": {
+        "2022-05-09 Luna/UST": "abnormal-down (all coins)",
+        "2022-11-09 FTX": "abnormal-down (all coins)"
+      },
       "full_window_sweep": "round-007 — NO combo hits all three >=85% on 2022+; best min-metric mild_z=1.75 abnormal_z=2.0 (spike 84.1%).",
       "conclusion": "1.75/1.9 confirmed robust across windows — kept unchanged. The 85% spike-recall target holds on 2023+ and 2024+ windows but is an intrinsic ceiling (~84%) on the full Luna/FTX crash era: ~16% of tail spikes cannot be caught by a |z| threshold without flooding calm days with false alarms (precision/recall tradeoff, not a tuning gap)."
     }
@@ -282,6 +297,59 @@
       },
       "passed": false,
       "notes": "No combo hit all three >=85%; logged best min-metric combo."
+    },
+    {
+      "id": "round-008",
+      "run_at": "2026-06-22T08:43:22Z",
+      "kind": "run",
+      "label": "backtest run",
+      "mild_z": 1.75,
+      "abnormal_z": 1.9,
+      "window": {
+        "start": "2024-01-01",
+        "end": "2026-06-22"
+      },
+      "portfolio": {
+        "BTC": 40.0,
+        "ETH": 20.0,
+        "BNB": 20.0,
+        "XRP": 20.0
+      },
+      "metrics": {
+        "eval_days": 874,
+        "calm_accuracy": 0.8952,
+        "calm_correct": 675,
+        "calm_days": 754,
+        "spike_recall": 0.9006,
+        "spike_detected": 163,
+        "spike_coin_days": 181,
+        "ranking_accuracy": 0.85,
+        "ranking_top1_hits": 102,
+        "ranking_days": 120,
+        "abnormal_days": 153
+      },
+      "passed": true,
+      "panic": {
+        "hold_final_usd": 16019.55,
+        "hold_return_pct": 60.2,
+        "panic_final_usd": 14236.65,
+        "panic_return_pct": 42.37,
+        "panic_sells": 4,
+        "false_alarms_30d": 3
+      },
+      "alert_value": {
+        "forward_days": 7,
+        "calm_on_down_days": 95,
+        "calm_honest_7d": 88,
+        "calm_false_reassurance": 7,
+        "false_panic_prevented": 53,
+        "calm_honest_rate": 0.9263,
+        "false_panic_prevention_rate": 0.5579,
+        "attention_abnormal_days": 153,
+        "attention_abnormal_down_coins": 122,
+        "attention_recover_7d": 61,
+        "attention_recover_rate": 0.5
+      }
     }
   ]
 }

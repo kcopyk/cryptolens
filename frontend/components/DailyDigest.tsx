@@ -267,11 +267,32 @@ export default function DailyDigest({ refreshKey, heat }: Props) {
                           {weight}% พอร์ต
                         </span>
                       )}
-                      {change !== undefined && (
-                        <span className={`text-[11px] font-semibold font-mono tabular-nums ${change >= 0 ? "text-mint" : "text-coral"}`}>
-                          {change >= 0 ? "+" : ""}{change.toFixed(2)}%
-                        </span>
-                      )}
+                      {(() => {
+                        const todayPct = dev?.today_return_pct ?? change;
+                        const showBoth =
+                          dev?.today_return_pct != null &&
+                          change !== undefined &&
+                          Math.abs(change - dev.today_return_pct) >= 0.15;
+                        if (todayPct === undefined) return null;
+                        return (
+                          <>
+                            <span
+                              className={`text-[11px] font-semibold font-mono tabular-nums ${todayPct >= 0 ? "text-mint" : "text-coral"}`}
+                              title={dev?.today_return_pct != null ? "การเคลื่อนไหววันนี้ (ปิดเมื่อวา → ปิดวันนี้)" : "24 ชม."}
+                            >
+                              {todayPct >= 0 ? "+" : ""}
+                              {todayPct.toFixed(2)}%
+                              {dev?.today_return_pct != null ? " วันนี้" : " 24h"}
+                            </span>
+                            {showBoth && (
+                              <span className="text-[10px] text-muted font-mono tabular-nums">
+                                24h {change! >= 0 ? "+" : ""}
+                                {change!.toFixed(2)}%
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                     <p className="text-[13px] text-muted leading-relaxed mt-1 pl-7">{text}</p>
                   </div>

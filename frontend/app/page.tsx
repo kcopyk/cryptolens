@@ -12,6 +12,7 @@ import {
   fetchHeat,
 } from "@/lib/api";
 import { useBinanceLive } from "@/hooks/useBinanceLive";
+import { useBinanceNetwork } from "@/hooks/useBinanceNetwork";
 import PriceScrollTicker from "@/components/PriceScrollTicker";
 import CoinFactCard, { CoinFactCardSkeleton } from "@/components/CoinFactCard";
 import HoldingsPanel from "@/components/HoldingsPanel";
@@ -52,6 +53,7 @@ export default function Dashboard() {
     backendInsights?.coins ?? null,
     displaySymbols
   );
+  const { portfolioMode } = useBinanceNetwork();
 
   const weightBySymbol = useMemo(() => {
     const prices = new Map(liveCoins.map((c) => [c.symbol, c.price]));
@@ -137,6 +139,14 @@ export default function Dashboard() {
     setChartOpen(false);
   }, []);
 
+  const handlePortfolioSettingsChange = useCallback(
+    (nextHoldings?: Holding[]) => {
+      if (nextHoldings) setHoldings(nextHoldings);
+      else loadBase();
+    },
+    [loadBase]
+  );
+
   const orderedCoins = useMemo(() => {
     if (!holdings.length) return liveCoins;
     const idx = new Map(heldSymbols.map((s, i) => [s, i]));
@@ -172,7 +182,13 @@ export default function Dashboard() {
         </RevealSection>
 
         <RevealSection>
-          <HoldingsPanel holdings={holdings} liveCoins={liveCoins} onChange={handleHoldingsChange} />
+          <HoldingsPanel
+            holdings={holdings}
+            liveCoins={liveCoins}
+            onChange={handleHoldingsChange}
+            onLinkBinance={() => setIsSettingsOpen(true)}
+            portfolioMode={portfolioMode}
+          />
         </RevealSection>
 
         <RevealSection as="section">
@@ -267,6 +283,7 @@ export default function Dashboard() {
         onClose={() => setIsSettingsOpen(false)}
         googleUser={googleUser}
         setGoogleUser={setGoogleUser}
+        onBinanceKeysChanged={handlePortfolioSettingsChange}
       />
     </div>
   );

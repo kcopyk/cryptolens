@@ -5,21 +5,7 @@ export type CandleLike = { close: number };
 /** Latest indicator values from candle closes — matches chart series exactly. */
 export function snapshotFromCloses(closes: number[]): Indicators | null {
   if (closes.length < 2) return null;
-  const ema9s = emaSeries(closes, 9);
-  const ema21s = emaSeries(closes, 21);
-  const { line, signal, histogram } = macdSeries(closes);
-  const rsis = rsiSeries(closes);
-  return {
-    ema_9: ema9s[ema9s.length - 1],
-    ema_21: ema21s[ema21s.length - 1],
-    macd: line[line.length - 1],
-    macd_signal: signal[signal.length - 1],
-    macd_histogram: histogram[histogram.length - 1],
-    rsi: rsis[rsis.length - 1],
-    bb_upper: 0,
-    bb_middle: 0,
-    bb_lower: 0,
-  };
+  return computeAll(closes);
 }
 
 export function snapshotFromCandles(candles: CandleLike[]): Indicators | null {

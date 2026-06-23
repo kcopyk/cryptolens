@@ -3,7 +3,10 @@
 Measures whether the deterministic engine helps portfolio holders:
   A) Signal quality — calm-day accuracy, spike recall, ranking
   B) Panic counterfactual — hold vs panic-sell on abnormal+down (research sim, NOT advice)
-  C) Interview-day picker — dates with ≥1 abnormal coin for qualitative study
+  C) Alert value (forward 7d) — calm/attention alerts vs what happened next
+  D) Interview-day picker — dates with ≥1 abnormal coin for qualitative study
+  E) Abnormal-up buy counterfactual — did abnormal-up fire before/during up moves;
+     if you bought at close on signal day, forward 7d win rate (research sim, NOT advice)
 
 Ground truth (independent of z-score): |daily return| in top 5% of the coin's
 own history over the evaluation window.
@@ -32,6 +35,7 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import heat as heat_mod  # noqa: E402
+import triage  # noqa: E402
 
 BINANCE = "https://api.binance.com"
 
@@ -47,6 +51,11 @@ WARMUP_DAYS = 30
 SPIKE_PERCENTILE = 95.0
 PANIC_COOLDOWN_DAYS = 30
 INITIAL_CAPITAL = 10_000.0
+FORWARD_DAYS = 7
+LEAD_LOOKBACK_DAYS = 3
+CALM_DOWN_AVG_PCT = -2.0          # avg coin return on alert day → "market down"
+CALM_DISASTER_FWD_PCT = -10.0     # portfolio 7d worse → false reassurance
+FALSE_PANIC_PREVENT_TARGET = 0.80 # calm-on-down days with fwd 7d > disaster threshold
 TUNING_LOG_PATH = Path(__file__).with_name("tuning_log.json")
 
 # Curated sanity dates — checked when they fall inside the run window.
@@ -143,25 +152,27 @@ def _percentile(values: list[float], pct: float) -> float:
     return xs[idx]
 
 
+def _coin_day_dict(c: CoinDay) -> dict:
+    return {
+        "symbol": c.symbol,
+        "change_24h_pct": c.daily_return_pct or 0.0,
+        "weight_pct": PORTFOLIO[c.symbol],
+        "deviation": c.dev,
+    }
+
+
 def _verdict_level(coins: list[CoinDay]) -> str:
-    if any(c.dev.get("status") == "abnormal" for c in coins):
-        return "abnormal"
-    if any(c.dev.get("status") == "mild" for c in coins):
-        return "mild"
-    return "normal"
+    _, _, level, _ = triage.portfolio_verdict([_coin_day_dict(c) for c in coins], weighted=True)
+    return level
 
 
 def _rank_coins(coins: list[CoinDay]) -> list[CoinDay]:
-    status_rank = {"abnormal": 2, "mild": 1, "normal": 0}
-
-    def key(c: CoinDay) -> tuple:
-        return (
-            status_rank.get(c.dev.get("status"), 0),
-            c.attention_score,
-            PORTFOLIO.get(c.symbol, 0),
-        )
-
-    return sorted(coins, key=key, reverse=True)
+    n = len(coins)
+    return sorted(
+        coins,
+        key=lambda c: triage.coin_sort_key(_coin_day_dict(c), weighted=True, n_coins=n),
+        reverse=True,
+    )
 
 
 def build_series(
@@ -345,6 +356,300 @@ def compute_metrics(snapshots: list[DaySnapshot]) -> Metrics:
     return m
 
 
+def _avg_daily_return(snap: DaySnapshot) -> float:
+    rets = [c.daily_return_pct for c in snap.coins if c.daily_return_pct is not None]
+    return sum(rets) / len(rets) if rets else 0.0
+
+
+def _coin_forward_return_pct(
+    sym: str,
+    day: date,
+    horizon: int,
+    by_sym_date: dict[str, dict[date, dict]],
+) -> float | None:
+    dates = sorted(by_sym_date[sym].keys())
+    if day not in dates:
+        return None
+    idx = dates.index(day)
+    if idx + horizon >= len(dates):
+        return None
+    c0 = by_sym_date[sym][dates[idx]]["close"]
+    c1 = by_sym_date[sym][dates[idx + horizon]]["close"]
+    if not c0:
+        return None
+    return (c1 - c0) / c0 * 100
+
+
+def _portfolio_forward_return_pct(
+    day: date,
+    horizon: int,
+    by_sym_date: dict[str, dict[date, dict]],
+) -> float | None:
+    """Weighted portfolio return from `day` close → `horizon` trading days later."""
+    total_w = sum(PORTFOLIO.values())
+    weighted = 0.0
+    for sym, w in PORTFOLIO.items():
+        r = _coin_forward_return_pct(sym, day, horizon, by_sym_date)
+        if r is None:
+            return None
+        weighted += w * r
+    return weighted / total_w
+
+
+def _is_calm_on_down_alert(snap: DaySnapshot) -> bool:
+    """Product-like calm alert: normal verdict while portfolio avg is down ≥2%."""
+    return (
+        snap.verdict_level == "normal"
+        and snap.all_engine_normal
+        and _avg_daily_return(snap) <= CALM_DOWN_AVG_PCT
+    )
+
+
+@dataclass
+class AlertValueMetrics:
+    forward_days: int = FORWARD_DAYS
+    calm_on_down_days: int = 0
+    calm_honest_7d: int = 0          # fwd portfolio > CALM_DISASTER_FWD_PCT
+    calm_false_reassurance: int = 0  # fwd portfolio ≤ CALM_DISASTER_FWD_PCT
+    false_panic_prevented: int = 0   # calm-on-down & fwd > 0 (panic sell would miss recovery)
+    calm_recover_7d: int = 0         # calm-on-down & fwd > 0
+
+    attention_abnormal_days: int = 0
+    attention_abnormal_down_coins: int = 0
+    attention_recover_7d: int = 0    # abnormal+down coin higher at +7d
+
+    @property
+    def calm_honest_rate(self) -> float:
+        return self.calm_honest_7d / self.calm_on_down_days if self.calm_on_down_days else 0.0
+
+    @property
+    def false_panic_prevention_rate(self) -> float:
+        """Share of calm-on-down days where holding beat panic-selling within 7d."""
+        return self.false_panic_prevented / self.calm_on_down_days if self.calm_on_down_days else 0.0
+
+    @property
+    def attention_recover_rate(self) -> float:
+        return (
+            self.attention_recover_7d / self.attention_abnormal_down_coins
+            if self.attention_abnormal_down_coins
+            else 0.0
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "forward_days": self.forward_days,
+            "calm_on_down_days": self.calm_on_down_days,
+            "calm_honest_7d": self.calm_honest_7d,
+            "calm_false_reassurance": self.calm_false_reassurance,
+            "false_panic_prevented": self.false_panic_prevented,
+            "calm_honest_rate": round(self.calm_honest_rate, 4),
+            "false_panic_prevention_rate": round(self.false_panic_prevention_rate, 4),
+            "attention_abnormal_days": self.attention_abnormal_days,
+            "attention_abnormal_down_coins": self.attention_abnormal_down_coins,
+            "attention_recover_7d": self.attention_recover_7d,
+            "attention_recover_rate": round(self.attention_recover_rate, 4),
+        }
+
+
+def compute_alert_value(
+    snapshots: list[DaySnapshot],
+    by_sym_date: dict[str, dict[date, dict]],
+    *,
+    forward_days: int = FORWARD_DAYS,
+) -> AlertValueMetrics:
+    """Forward-looking value of calm vs attention alerts (layer 2 eval)."""
+    av = AlertValueMetrics(forward_days=forward_days)
+    for snap in snapshots:
+        fwd = _portfolio_forward_return_pct(snap.day, forward_days, by_sym_date)
+        if fwd is None:
+            continue
+
+        if _is_calm_on_down_alert(snap):
+            av.calm_on_down_days += 1
+            if fwd > CALM_DISASTER_FWD_PCT:
+                av.calm_honest_7d += 1
+            else:
+                av.calm_false_reassurance += 1
+            if fwd > 0:
+                av.false_panic_prevented += 1
+                av.calm_recover_7d += 1
+
+        if snap.verdict_level == "abnormal":
+            av.attention_abnormal_days += 1
+
+        for c in snap.coins:
+            if c.dev.get("status") != "abnormal" or c.dev.get("direction") != "down":
+                continue
+            if not triage.is_hero_abnormal(
+                _coin_day_dict(c), weighted=True, n_coins=len(snap.coins)
+            ):
+                continue
+            coin_fwd = _coin_forward_return_pct(c.symbol, snap.day, forward_days, by_sym_date)
+            if coin_fwd is None:
+                continue
+            av.attention_abnormal_down_coins += 1
+            if coin_fwd > 0:
+                av.attention_recover_7d += 1
+
+    return av
+
+
+def _is_abnormal_up_signal(c: CoinDay, *, hero_only: bool = False, n_coins: int = 4) -> bool:
+    if c.dev.get("direction") != "up":
+        return False
+    st = c.dev.get("status")
+    if st not in ("mild", "abnormal"):
+        return False
+    if hero_only:
+        return st == "abnormal" and triage.is_hero_abnormal(
+            _coin_day_dict(c), weighted=True, n_coins=n_coins
+        )
+    return True
+
+
+def _is_up_spike(c: CoinDay) -> bool:
+    return c.true_spike and (c.daily_return_pct or 0) > 0
+
+
+@dataclass
+class AbnormalUpBuyMetrics:
+    forward_days: int = FORWARD_DAYS
+    # Buy at close on abnormal/mild + up signal day → forward return
+    signal_coin_days: int = 0
+    signal_wins: int = 0
+    signal_avg_fwd_pct: float = 0.0
+    signal_median_fwd_pct: float = 0.0
+    abnormal_only_days: int = 0
+    abnormal_only_wins: int = 0
+    hero_abnormal_up_days: int = 0
+    hero_abnormal_up_wins: int = 0
+    # Baseline: buy every coin-day in eval window
+    baseline_coin_days: int = 0
+    baseline_wins: int = 0
+    baseline_avg_fwd_pct: float = 0.0
+    # Did abnormal-up appear on/before big up days?
+    up_spike_days: int = 0
+    up_spike_same_day_signal: int = 0
+    up_spike_with_lead_signal: int = 0  # same day or within LEAD_LOOKBACK_DAYS prior
+
+    @property
+    def signal_win_rate(self) -> float:
+        return self.signal_wins / self.signal_coin_days if self.signal_coin_days else 0.0
+
+    @property
+    def abnormal_only_win_rate(self) -> float:
+        return self.abnormal_only_wins / self.abnormal_only_days if self.abnormal_only_days else 0.0
+
+    @property
+    def hero_abnormal_up_win_rate(self) -> float:
+        return (
+            self.hero_abnormal_up_wins / self.hero_abnormal_up_days
+            if self.hero_abnormal_up_days
+            else 0.0
+        )
+
+    @property
+    def baseline_win_rate(self) -> float:
+        return self.baseline_wins / self.baseline_coin_days if self.baseline_coin_days else 0.0
+
+    @property
+    def up_spike_same_day_rate(self) -> float:
+        return self.up_spike_same_day_signal / self.up_spike_days if self.up_spike_days else 0.0
+
+    @property
+    def up_spike_lead_rate(self) -> float:
+        return self.up_spike_with_lead_signal / self.up_spike_days if self.up_spike_days else 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "forward_days": self.forward_days,
+            "signal_coin_days": self.signal_coin_days,
+            "signal_win_rate": round(self.signal_win_rate, 4),
+            "signal_wins": self.signal_wins,
+            "signal_avg_fwd_pct": round(self.signal_avg_fwd_pct, 3),
+            "signal_median_fwd_pct": round(self.signal_median_fwd_pct, 3),
+            "abnormal_only_days": self.abnormal_only_days,
+            "abnormal_only_win_rate": round(self.abnormal_only_win_rate, 4),
+            "hero_abnormal_up_days": self.hero_abnormal_up_days,
+            "hero_abnormal_up_win_rate": round(self.hero_abnormal_up_win_rate, 4),
+            "baseline_coin_days": self.baseline_coin_days,
+            "baseline_win_rate": round(self.baseline_win_rate, 4),
+            "baseline_avg_fwd_pct": round(self.baseline_avg_fwd_pct, 3),
+            "up_spike_days": self.up_spike_days,
+            "up_spike_same_day_rate": round(self.up_spike_same_day_rate, 4),
+            "up_spike_lead_rate": round(self.up_spike_lead_rate, 4),
+        }
+
+
+def compute_abnormal_up_buy(
+    snapshots: list[DaySnapshot],
+    by_sym_date: dict[str, dict[date, dict]],
+    *,
+    forward_days: int = FORWARD_DAYS,
+) -> AbnormalUpBuyMetrics:
+    """Research counterfactual: buy at close on abnormal-up signal; measure forward return."""
+    m = AbnormalUpBuyMetrics(forward_days=forward_days)
+    by_day = {s.day: s for s in snapshots}
+
+    signal_fwds: list[float] = []
+    baseline_fwds: list[float] = []
+
+    for snap in snapshots:
+        n_coins = len(snap.coins)
+        for c in snap.coins:
+            fwd = _coin_forward_return_pct(c.symbol, snap.day, forward_days, by_sym_date)
+            if fwd is None:
+                continue
+
+            baseline_fwds.append(fwd)
+            m.baseline_coin_days += 1
+            if fwd > 0:
+                m.baseline_wins += 1
+
+            if _is_abnormal_up_signal(c):
+                signal_fwds.append(fwd)
+                m.signal_coin_days += 1
+                if fwd > 0:
+                    m.signal_wins += 1
+
+            if c.dev.get("status") == "abnormal" and c.dev.get("direction") == "up":
+                m.abnormal_only_days += 1
+                if fwd > 0:
+                    m.abnormal_only_wins += 1
+
+            if _is_abnormal_up_signal(c, hero_only=True, n_coins=n_coins):
+                m.hero_abnormal_up_days += 1
+                if fwd > 0:
+                    m.hero_abnormal_up_wins += 1
+
+            if not _is_up_spike(c):
+                continue
+            m.up_spike_days += 1
+            same = _is_abnormal_up_signal(c, n_coins=n_coins)
+            if same:
+                m.up_spike_same_day_signal += 1
+            lead = same
+            if not lead:
+                for lag in range(1, LEAD_LOOKBACK_DAYS + 1):
+                    prev = by_day.get(snap.day - timedelta(days=lag))
+                    if not prev:
+                        continue
+                    pc = next((x for x in prev.coins if x.symbol == c.symbol), None)
+                    if pc and _is_abnormal_up_signal(pc, n_coins=len(prev.coins)):
+                        lead = True
+                        break
+            if lead:
+                m.up_spike_with_lead_signal += 1
+
+    if signal_fwds:
+        m.signal_avg_fwd_pct = sum(signal_fwds) / len(signal_fwds)
+        m.signal_median_fwd_pct = sorted(signal_fwds)[len(signal_fwds) // 2]
+    if baseline_fwds:
+        m.baseline_avg_fwd_pct = sum(baseline_fwds) / len(baseline_fwds)
+
+    return m
+
+
 @dataclass
 class PanicResult:
     hold_final: float
@@ -393,6 +698,8 @@ def append_tuning_round(
     end: date,
     metrics: Metrics,
     panic: PanicResult | None = None,
+    alert_value: AlertValueMetrics | None = None,
+    abnormal_up_buy: AbnormalUpBuyMetrics | None = None,
     passed: bool,
     notes: str = "",
     candidates: list[dict] | None = None,
@@ -414,6 +721,10 @@ def append_tuning_round(
     }
     if panic is not None:
         entry["panic"] = panic.to_dict()
+    if alert_value is not None:
+        entry["alert_value"] = alert_value.to_dict()
+    if abnormal_up_buy is not None:
+        entry["abnormal_up_buy"] = abnormal_up_buy.to_dict()
     if notes:
         entry["notes"] = notes
     if candidates:
@@ -456,10 +767,14 @@ def simulate_panic(
             snap = snap_by_day.get(d)
             if snap:
                 coin = next(c for c in snap.coins if c.symbol == sym)
+                payload = _coin_day_dict(coin)
                 if (
                     sym in panic_units
                     and coin.dev.get("status") == "abnormal"
                     and coin.dev.get("direction") == "down"
+                    and triage.is_hero_abnormal(
+                        payload, weighted=True, n_coins=len(snap.coins)
+                    )
                 ):
                     panic_cash += panic_units[sym] * close
                     del panic_units[sym]
@@ -722,6 +1037,8 @@ def main() -> None:
         print(f"Thresholds: mild_z={args.mild_z} abnormal_z={args.abnormal_z}\n")
 
     metrics = compute_metrics(snapshots)
+    alert_value = compute_alert_value(snapshots, by_sym_date)
+    abnormal_up = compute_abnormal_up_buy(snapshots, by_sym_date)
     panic = simulate_panic(snapshots, by_sym_date)
 
     print(f"\n── A) Signal quality ({metrics.eval_days} eval days) ──")
@@ -732,12 +1049,59 @@ def main() -> None:
     print(f"  Ranking top-1 (spike days, |ret|×weight):     {_pct(metrics.ranking_accuracy)}  "
           f"({metrics.ranking_top1_hits}/{metrics.ranking_days})  target ≥85%")
     print(f"  Days with portfolio verdict abnormal:         {metrics.abnormal_days}")
+    raw_abn = sum(
+        1 for s in snapshots
+        if any(c.dev.get("status") == "abnormal" for c in s.coins)
+    )
+    print(f"  Days with any raw abnormal (pre-gate):      {raw_abn}")
 
     print("\n── B) Panic counterfactual (abnormal+down → sell 100%, no rebuy) ──")
     print(f"  Hold final:   ${panic.hold_final:,.2f}  ({panic.hold_return_pct:+.1f}%)")
     print(f"  Panic final:  ${panic.panic_final:,.2f}  ({panic.panic_return_pct:+.1f}%)")
     print(f"  Panic sells:  {panic.panic_sells}  ·  false alarms (recover within 30d): {panic.false_alarms}")
     print("  (Research sim — NOT product advice; measures cost of panic without context.)")
+
+    print(f"\n── C) Alert value (forward {FORWARD_DAYS}d) ──")
+    print(f"  Calm alert (normal verdict · avg day ≤{CALM_DOWN_AVG_PCT:.0f}%):  "
+          f"{alert_value.calm_on_down_days} days")
+    print(f"  Calm honest (portfolio 7d > {CALM_DISASTER_FWD_PCT:.0f}%):       "
+          f"{_pct(alert_value.calm_honest_rate)}  "
+          f"({alert_value.calm_honest_7d}/{alert_value.calm_on_down_days})  target ≥80%")
+    print(f"  False panic prevented (7d fwd > 0%):          "
+          f"{_pct(alert_value.false_panic_prevention_rate)}  "
+          f"({alert_value.false_panic_prevented}/{alert_value.calm_on_down_days})")
+    print(f"  False reassurance (7d fwd ≤ {CALM_DISASTER_FWD_PCT:.0f}%):       "
+          f"{alert_value.calm_false_reassurance} days")
+    print(f"  Attention hero abnormal+down → recovers 7d:  "
+          f"{_pct(alert_value.attention_recover_rate)}  "
+          f"({alert_value.attention_recover_7d}/{alert_value.attention_abnormal_down_coins})  "
+          f"(hero-gated |z|×weight≥{triage.HERO_ATTENTION_MIN:.0f})")
+    print("  (Calm = 'ไม่ต้องห่วง' on down days · Attention = abnormal+down coin context.)")
+
+    print(f"\n── E) Abnormal-up buy counterfactual (forward {FORWARD_DAYS}d) ──")
+    print(f"  Signal mild/abnormal+↑ → buy at close:     "
+          f"win {_pct(abnormal_up.signal_win_rate)}  "
+          f"({abnormal_up.signal_wins}/{abnormal_up.signal_coin_days})  "
+          f"avg {abnormal_up.signal_avg_fwd_pct:+.2f}%  "
+          f"med {abnormal_up.signal_median_fwd_pct:+.2f}%")
+    print(f"  Abnormal-only+↑:                           "
+          f"win {_pct(abnormal_up.abnormal_only_win_rate)}  "
+          f"({abnormal_up.abnormal_only_wins}/{abnormal_up.abnormal_only_days})")
+    print(f"  Hero abnormal+↑ (|z|×weight≥{triage.HERO_ATTENTION_MIN:.0f}):  "
+          f"win {_pct(abnormal_up.hero_abnormal_up_win_rate)}  "
+          f"({abnormal_up.hero_abnormal_up_wins}/{abnormal_up.hero_abnormal_up_days})")
+    print(f"  Baseline (buy every coin-day):               "
+          f"win {_pct(abnormal_up.baseline_win_rate)}  "
+          f"({abnormal_up.baseline_wins}/{abnormal_up.baseline_coin_days})  "
+          f"avg {abnormal_up.baseline_avg_fwd_pct:+.2f}%")
+    print(f"  Big up days (top-{SPIKE_PERCENTILE:.0f}% daily ↑):  {abnormal_up.up_spike_days}")
+    print(f"    had abnormal/mild+↑ same day:              "
+          f"{_pct(abnormal_up.up_spike_same_day_rate)}  "
+          f"({abnormal_up.up_spike_same_day_signal}/{abnormal_up.up_spike_days})")
+    print(f"    had signal same day or ≤{LEAD_LOOKBACK_DAYS}d before:  "
+          f"{_pct(abnormal_up.up_spike_lead_rate)}  "
+          f"({abnormal_up.up_spike_with_lead_signal}/{abnormal_up.up_spike_days})")
+    print("  (Research sim — NOT buy advice; tests if abnormal-up precedes/profits from up moves.)")
 
     print_sanity_checks(snapshots, start, end)
 
@@ -752,6 +1116,7 @@ def main() -> None:
         metrics.calm_accuracy >= 0.85
         and metrics.spike_recall >= 0.85
         and metrics.ranking_accuracy >= 0.85
+        and alert_value.calm_honest_rate >= FALSE_PANIC_PREVENT_TARGET
     )
     if not args.no_log:
         mild = args.mild_z if args.mild_z is not None else heat_mod.DEV_MILD_Z
@@ -765,11 +1130,15 @@ def main() -> None:
             end=end,
             metrics=metrics,
             panic=panic,
+            alert_value=alert_value,
+            abnormal_up_buy=abnormal_up,
             passed=ok,
         )
         print(f"\nLogged → eval/tuning_log.json ({rid})")
     if not ok:
         print("\n⚠ Below target thresholds — review before qualitative study (B).")
+        if alert_value.calm_honest_rate < FALSE_PANIC_PREVENT_TARGET:
+            print(f"   Alert value: calm honest {_pct(alert_value.calm_honest_rate)} < {_pct(FALSE_PANIC_PREVENT_TARGET)}")
     sys.exit(0 if ok else 1)
 
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Coin, ChartInterval, CHART_INTERVALS, formatNumber } from "@/lib/api";
+import { Coin, ChartInterval, CHART_INTERVALS, formatNumber, INDICATOR_INTERVAL } from "@/lib/api";
 import { useBinanceChart } from "@/hooks/useBinanceChart";
 import { snapshotFromCandles } from "@/lib/indicators";
 import { MacdMiniChart, RsiMiniChart } from "./CandlestickChart";
@@ -17,12 +17,13 @@ interface Props {
 }
 
 export default function ChartPanel({ coin, onAsk }: Props) {
-  const [interval, setInterval] = useState<ChartInterval>("15m");
+  const [interval, setInterval] = useState<ChartInterval>(INDICATOR_INTERVAL);
   const { candles, loading, error, retry } = useBinanceChart(coin.symbol, interval);
 
   const news = coin.news ?? [];
   const snap = snapshotFromCandles(candles);
   const showChart = candles.length > 0;
+  const indicatorsMatchCard = interval === INDICATOR_INTERVAL;
 
   return (
     <section className="flex flex-col gap-4">
@@ -128,7 +129,14 @@ export default function ChartPanel({ coin, onAsk }: Props) {
       {/* ── Indicators + news ── */}
       <div className="bg-panel/50 border border-line rounded-2xl px-5 py-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div>
-          <h3 className="text-xs uppercase tracking-wider text-muted mb-3">Technical Indicators</h3>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h3 className="text-xs uppercase tracking-wider text-muted">Technical Indicators</h3>
+            {!indicatorsMatchCard && (
+              <span className="text-[10px] text-warn/90">
+                ตาม {interval.toUpperCase()} — การ์ดใช้ {INDICATOR_INTERVAL.toUpperCase()}
+              </span>
+            )}
+          </div>
           {showChart && <IndicatorBar candles={candles} />}
         </div>
         <div>

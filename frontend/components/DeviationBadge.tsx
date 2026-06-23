@@ -34,6 +34,9 @@ function headline(dev: Deviation): string {
   }
   const dir = dev.direction === "down" ? "ลงแรง" : dev.direction === "up" ? "ขึ้นแรง" : "แกว่ง";
   const how = dev.status === "abnormal" ? "ผิดปกติชัด" : "ผิดปกติเล็กน้อย";
+  if (dev.status === "abnormal" && dev.direction === "down") {
+    return `${moveTxt} · ลงแรงสำหรับเหรียญนี้ — ไม่ใช่คำแนะนำให้ขาย`;
+  }
   return `${moveTxt} · ${dir}${how}เทียบกรอบ ${dev.window_days} วัน`;
 }
 

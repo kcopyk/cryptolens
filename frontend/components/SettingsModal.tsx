@@ -1,10 +1,22 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
+import {
+  deleteBinanceKeys,
+  fetchBinanceNetwork,
+  getBinanceKeysStatus,
+  saveBinanceKeys,
+  setPortfolioMode,
+  type PortfolioMode,
+} from "@/lib/api";
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   googleUser: { name: string; email: string; avatar: string } | null;
   setGoogleUser: (user: { name: string; email: string; avatar: string } | null) => void;
+  /** Called after portfolio mode or Binance keys change. */
+  onBinanceKeysChanged?: (holdings?: import("@/lib/api").Holding[]) => void;
 }
 
 export default function SettingsModal({
@@ -12,18 +24,115 @@ export default function SettingsModal({
   onClose,
   googleUser,
   setGoogleUser,
+  onBinanceKeysChanged,
 }: SettingsModalProps) {
+  const [apiKey, setApiKey] = useState("");
+  const [secretKey, setSecretKey] = useState("");
+  const [linked, setLinked] = useState(false);
+  const [maskedKey, setMaskedKey] = useState<string | null>(null);
+  const [portfolioMode, setPortfolioModeState] = useState<PortfolioMode>("demo");
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [networkBusy, setNetworkBusy] = useState(false);
+  const [keyMsg, setKeyMsg] = useState<string | null>(null);
+  const [keyError, setKeyError] = useState<string | null>(null);
+
+  const loadKeyStatus = useCallback(async () => {
+    try {
+      const [status, network] = await Promise.all([
+        getBinanceKeysStatus(),
+        fetchBinanceNetwork(),
+      ]);
+      setLinked(status.linked);
+      setMaskedKey(status.api_key_masked ?? null);
+      setPortfolioModeState(
+        network.portfolio_mode ?? status.portfolio_mode ?? (network.use_testnet ? "testnet" : "demo")
+      );
+    } catch {
+      setLinked(false);
+      setMaskedKey(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadKeyStatus();
+      setKeyMsg(null);
+      setKeyError(null);
+    }
+  }, [isOpen, loadKeyStatus]);
+
+  const handleModeChange = async (mode: PortfolioMode) => {
+    if (mode === portfolioMode) return;
+    setNetworkBusy(true);
+    setKeyError(null);
+    setKeyMsg(null);
+    try {
+      const res = await setPortfolioMode(mode);
+      setPortfolioModeState(mode);
+      setKeyMsg(
+        mode === "demo"
+          ? "โหมด Demo — เพิ่ม/ลบเหรียญได้ · ไม่ซิงก์ Binance"
+          : "โหมด Testnet — เชื่อม API แล้วกดซิงก์พอร์ตได้"
+      );
+      onBinanceKeysChanged?.(res.holdings);
+      window.dispatchEvent(new Event("cryptolens_network_changed"));
+    } catch (e) {
+      setKeyError(e instanceof Error ? e.message : "เปลี่ยนโหมดไม่สำเร็จ");
+    } finally {
+      setNetworkBusy(false);
+    }
+  };
+
+  const handleSaveKeys = async () => {
+    if (!apiKey.trim() || !secretKey.trim()) {
+      setKeyError("ใส่ API Key และ Secret Key");
+      return;
+    }
+    setKeyBusy(true);
+    setKeyError(null);
+    setKeyMsg(null);
+    try {
+      const res = await saveBinanceKeys(apiKey.trim(), secretKey.trim());
+      setKeyMsg(res.message ?? "เชื่อมต่อสำเร็จ");
+      setApiKey("");
+      setSecretKey("");
+      await loadKeyStatus();
+      onBinanceKeysChanged?.();
+      window.dispatchEvent(new Event("cryptolens_binance_keys_changed"));
+    } catch (e) {
+      setKeyError(e instanceof Error ? e.message : "เชื่อมต่อไม่สำเร็จ");
+    } finally {
+      setKeyBusy(false);
+    }
+  };
+
+  const handleUnlink = async () => {
+    setKeyBusy(true);
+    setKeyError(null);
+    setKeyMsg(null);
+    try {
+      await deleteBinanceKeys();
+      setKeyMsg("ยกเลิกการเชื่อมแล้ว");
+      await loadKeyStatus();
+      onBinanceKeysChanged?.();
+      window.dispatchEvent(new Event("cryptolens_binance_keys_changed"));
+    } catch (e) {
+      setKeyError(e instanceof Error ? e.message : "ยกเลิกไม่สำเร็จ");
+    } finally {
+      setKeyBusy(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-panel border border-line rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-fade-in-down flex flex-col max-h-[90vh]">
-        {/* Modal Header */}
         <div className="px-6 py-4 border-b border-line flex items-center justify-between">
           <div>
-            <h2 className="text-[16px] font-bold text-ink font-sans">บัญชีผู้ใช้ (Account)</h2>
+            <h2 className="text-[16px] font-bold text-ink font-sans">การตั้งค่า</h2>
             <p className="text-[11px] text-muted font-sans mt-0.5">
-              ลงชื่อเข้าใช้เพื่อบันทึกพอร์ตและรับสรุปรายวัน
+              บัญชี + เชื่อม Binance อ่านยอด Spot
             </p>
           </div>
           <button
@@ -34,7 +143,6 @@ export default function SettingsModal({
           </button>
         </div>
 
-        {/* Modal Content */}
         <div className="p-6 overflow-y-auto space-y-6">
           <div className="space-y-3">
             {!googleUser ? (
@@ -56,24 +164,6 @@ export default function SettingsModal({
                   }}
                   className="inline-flex items-center gap-2 bg-white hover:bg-white/90 text-base text-xs font-semibold px-4 py-2.5 rounded-lg transition-colors cursor-pointer shadow-md"
                 >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
-                    <path
-                      fill="currentColor"
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                    />
-                  </svg>
                   <span>Sign in with Google</span>
                 </button>
               </div>
@@ -96,28 +186,115 @@ export default function SettingsModal({
                   }}
                   className="text-xs text-coral hover:text-coral/80 font-medium px-3 py-1.5 rounded-lg border border-coral/30 bg-coral/10 hover:bg-coral/20 transition-all cursor-pointer"
                 >
-                  ออกจากระบบ (Sign Out)
+                  ออกจากระบบ
                 </button>
               </div>
             )}
           </div>
 
+          <div className="border border-line rounded-xl p-4 bg-panel/20 space-y-3">
+            <div>
+              <p className="text-[11px] font-semibold text-ink">โหมดพอร์ต</p>
+              <p className="text-[10px] text-muted mt-0.5">
+                Demo = กรอกพอร์ตเองสำหรับนำเสนอ · Testnet = ซิงก์จาก Binance Testnet ได้ด้วย
+              </p>
+            </div>
+            <div className="flex rounded-lg border border-line overflow-hidden">
+              {(["demo", "testnet"] as const).map((mode) => {
+                const active = portfolioMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    disabled={networkBusy}
+                    onClick={() => handleModeChange(mode)}
+                    className={`flex-1 px-3 py-2 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                      active
+                        ? mode === "testnet"
+                          ? "bg-warn/15 text-warn"
+                          : "bg-mint/15 text-mint"
+                        : "bg-base text-muted hover:text-ink"
+                    }`}
+                  >
+                    {mode === "demo" ? "Demo (default)" : "Testnet"}
+                  </button>
+                );
+              })}
+            </div>
+
+            {portfolioMode === "testnet" && (
+              <>
+            <div>
+              <p className="text-[12px] font-bold text-ink">ซิงก์พอร์ตจาก Binance</p>
+              <p className="text-[10px] text-muted leading-relaxed mt-1">
+                Read-only API key (Enable Reading · ปิด Withdrawal) — testnet.binance.vision
+              </p>
+            </div>
+
+            {linked && maskedKey ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-mint/20 bg-mint/5 px-3 py-2.5">
+                <div>
+                  <p className="text-[11px] text-mint font-semibold">เชื่อมแล้ว</p>
+                  <p className="text-[10px] text-muted font-mono">{maskedKey}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleUnlink}
+                  disabled={keyBusy}
+                  className="text-[10px] text-coral border border-coral/30 px-2.5 py-1.5 rounded-lg hover:bg-coral/10 disabled:opacity-50"
+                >
+                  ยกเลิก
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <input
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="API Key"
+                  autoComplete="off"
+                  className="w-full bg-base border border-line rounded-lg px-3 py-2 text-xs text-ink placeholder:text-muted outline-none focus:border-mint/40 font-mono"
+                />
+                <input
+                  value={secretKey}
+                  onChange={(e) => setSecretKey(e.target.value)}
+                  placeholder="Secret Key"
+                  type="password"
+                  autoComplete="off"
+                  className="w-full bg-base border border-line rounded-lg px-3 py-2 text-xs text-ink placeholder:text-muted outline-none focus:border-mint/40 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveKeys}
+                  disabled={keyBusy}
+                  className="w-full py-2.5 rounded-lg text-xs font-bold bg-mint text-base hover:bg-mint/90 disabled:opacity-50"
+                >
+                  {keyBusy ? "กำลังเชื่อม…" : "เชื่อม Binance"}
+                </button>
+              </div>
+            )}
+
+              </>
+            )}
+
+            {keyMsg && <p className="text-[10px] text-mint">{keyMsg}</p>}
+            {keyError && <p className="text-[10px] text-coral">{keyError}</p>}
+          </div>
+
           <div className="border border-line rounded-xl p-4 bg-panel/20 space-y-1.5">
             <p className="text-[11px] text-ink font-semibold">CryptoLens ไม่แตะเงินของคุณ</p>
             <p className="text-[10px] text-muted leading-relaxed">
-              เราไม่ยิงออเดอร์และไม่ถือ API key เทรดของคุณ — เมื่ออยากลงมือ ปุ่ม
-              &quot;เทรดบน Binance&quot; จะพาไปทำเองบนบัญชี Binance ของคุณ
+              เราไม่ยิงออเดอร์ — เมื่ออยากลงมือ ปุ่ม &quot;เทรดบน Binance&quot; จะพาไปทำเองบนบัญชีของคุณ
             </p>
           </div>
         </div>
 
-        {/* Modal Footer */}
         <div className="px-6 py-4 border-t border-line bg-panel/60 flex justify-end">
           <button
             onClick={onClose}
             className="text-xs font-bold bg-ink/6 hover:bg-ink/10 text-ink border border-line hover:border-mint/30 px-4 py-2.5 rounded-xl transition-colors cursor-pointer"
           >
-            ปิดหน้าต่าง (Close)
+            ปิด
           </button>
         </div>
       </div>

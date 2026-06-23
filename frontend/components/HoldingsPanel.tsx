@@ -1,78 +1,70 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Coin,
   Holding,
   formatNumber,
+  getBinanceKeysStatus,
+  syncHoldingsFromBinance,
   upsertHolding,
   removeHolding,
 } from "@/lib/api";
 import CoinIcon from "./CoinIcon";
+import BinanceNetworkBadge from "./BinanceNetworkBadge";
+import DemoModeBadge from "./DemoModeBadge";
+import type { PortfolioMode } from "@/hooks/useBinanceNetwork";
 
 interface Props {
   holdings: Holding[];
-  /** Live coins (for prices). Held coins are kept in the live set by the page. */
   liveCoins: Coin[];
   onChange: (next: Holding[]) => void;
-}
-
-type InputMode = "amount" | "usd" | "pct";
-
-const MODE_LABELS: Record<InputMode, string> = {
-  amount: "จำนวน",
-  usd: "USD",
-  pct: "%",
-};
-
-const MODE_PLACEHOLDERS: Record<InputMode, string> = {
-  amount: "0.5",
-  usd: "1000",
-  pct: "30",
-};
-
-function resolveCoinAmount(
-  sym: string,
-  raw: number,
-  mode: InputMode,
-  price: number,
-  holdings: Holding[],
-  priceBySymbol: Map<string, number>
-): { amount: number } | { error: string } {
-  if (mode === "amount") return { amount: raw };
-
-  if (price <= 0) {
-    return { error: "ยังไม่มีราคาเหรียญนี้ — ลองใหม่ในอีกสักครู่" };
-  }
-
-  if (mode === "usd") return { amount: raw / price };
-
-  if (raw >= 100) return { error: "ใส่ % น้อยกว่า 100" };
-
-  const otherTotal = holdings
-    .filter((h) => h.symbol !== sym)
-    .reduce((s, h) => s + h.amount * (priceBySymbol.get(h.symbol) ?? 0), 0);
-
-  if (otherTotal <= 0) {
-    return { error: "ใช้ % ได้เมื่อมีเหรียญอื่นในพอร์ตแล้ว — เหรียญแรกใส่เป็นจำนวนหรือ USD" };
-  }
-
-  const targetPct = raw / 100;
-  const targetUsd = (targetPct * otherTotal) / (1 - targetPct);
-  return { amount: targetUsd / price };
+  onLinkBinance?: () => void;
+  portfolioMode?: PortfolioMode;
 }
 
 /**
- * Manual holdings (PLAN milestone 1). The user types what they hold — no API
- * key, no liability. This turns "the market" into "your money" and feeds the
- * portfolio-weighted digest.
+ * Manual holdings + optional read-only Binance sync. Feeds the portfolio-weighted digest.
  */
-export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) {
+export default function HoldingsPanel({
+  holdings,
+  liveCoins,
+  onChange,
+  onLinkBinance,
+  portfolioMode = "demo",
+}: Props) {
+  const isDemo = portfolioMode === "demo";
+  const isTestnet = portfolioMode === "testnet";
   const [symbol, setSymbol] = useState("");
-  const [value, setValue] = useState("");
-  const [inputMode, setInputMode] = useState<InputMode>("amount");
+  const [amount, setAmount] = useState("");
+  const [avgPrice, setAvgPrice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [binanceLinked, setBinanceLinked] = useState(false);
+  const [binanceMasked, setBinanceMasked] = useState<string | null>(null);
+
+  const refreshKeyStatus = useCallback(async () => {
+    try {
+      const status = await getBinanceKeysStatus();
+      setBinanceLinked(status.linked);
+      setBinanceMasked(status.api_key_masked ?? null);
+    } catch {
+      setBinanceLinked(false);
+      setBinanceMasked(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshKeyStatus();
+    const onChange = () => refreshKeyStatus();
+    window.addEventListener("cryptolens_binance_keys_changed", onChange);
+    window.addEventListener("cryptolens_network_changed", onChange);
+    return () => {
+      window.removeEventListener("cryptolens_binance_keys_changed", onChange);
+      window.removeEventListener("cryptolens_network_changed", onChange);
+    };
+  }, [refreshKeyStatus]);
 
   const priceBySymbol = useMemo(
     () => new Map(liveCoins.map((c) => [c.symbol, c.price])),
@@ -94,38 +86,50 @@ export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) 
     };
   }, [holdings, priceBySymbol]);
 
-  const pctModeDisabled = useMemo(() => {
-    if (holdings.length === 0) return true;
-    const sym = symbol.trim().toUpperCase();
-    if (holdings.length === 1 && holdings[0]?.symbol === sym) return true;
-    return false;
-  }, [holdings, symbol]);
-
-  useEffect(() => {
-    if (inputMode === "pct" && pctModeDisabled) setInputMode("amount");
-  }, [inputMode, pctModeDisabled]);
-
   const handleAdd = async () => {
     const sym = symbol.trim().toUpperCase();
-    const raw = parseFloat(value);
-    if (!sym) return setError("ใส่ชื่อเหรียญ เช่น BTC");
-    if (!Number.isFinite(raw) || raw <= 0) return setError("ใส่ค่าที่มากกว่า 0");
+    const qty = parseFloat(amount);
+    const avg = avgPrice.trim() ? parseFloat(avgPrice) : null;
 
-    const price = priceBySymbol.get(sym) ?? 0;
-    const resolved = resolveCoinAmount(sym, raw, inputMode, price, holdings, priceBySymbol);
-    if ("error" in resolved) return setError(resolved.error);
+    if (!sym) return setError("ใส่ชื่อเหรียญ เช่น BTC");
+    if (!Number.isFinite(qty) || qty <= 0) return setError("ใส่จำนวนเหรียญที่มากกว่า 0");
+    if (avg != null && (!Number.isFinite(avg) || avg <= 0)) {
+      return setError("ราคาเฉลี่ยต้องมากกว่า 0");
+    }
 
     setBusy(true);
     setError(null);
     try {
-      const next = await upsertHolding(sym, resolved.amount);
+      const next = await upsertHolding(sym, qty, avg);
       onChange(next);
       setSymbol("");
-      setValue("");
+      setAmount("");
+      setAvgPrice("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "เพิ่มไม่สำเร็จ");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleSync = async () => {
+    if (isDemo) {
+      setError("ซิงก์ Binance ได้ในโหมด Testnet เท่านั้น — เปลี่ยนในการตั้งค่า");
+      return;
+    }
+    if (!binanceLinked) {
+      onLinkBinance?.();
+      return;
+    }
+    setSyncing(true);
+    setError(null);
+    try {
+      const { holdings: next } = await syncHoldingsFromBinance();
+      onChange(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ซิงก์ไม่สำเร็จ");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -137,29 +141,58 @@ export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) 
     }
   };
 
-  const handleModeChange = (mode: InputMode) => {
-    if (mode === "pct" && pctModeDisabled) return;
-    setInputMode(mode);
-    setError(null);
-  };
-
   return (
     <section className="bg-panel/60 border border-line rounded-3xl p-5 sm:p-6">
-      <div className="flex items-center justify-between gap-3 mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
         <div>
-          <h2 className="text-sm font-bold text-ink">พอร์ตของคุณ</h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-sm font-bold text-ink">พอร์ตของคุณ</h2>
+            {isDemo && <DemoModeBadge />}
+            {isTestnet && <BinanceNetworkBadge />}
+          </div>
           <p className="text-[11px] text-muted mt-0.5">
-            กรอกเหรียญที่ถือ เพื่อให้สรุปรายวันพูดถึง &quot;เงินของคุณ&quot; จริง
+            {isDemo
+              ? "กรอกพอร์ตเองสำหรับนำเสนอ — สรุปถ่วงน้ำหนักตามที่ใส่"
+              : "กรอกเองหรือซิงก์จาก Binance Testnet"}
           </p>
         </div>
-        {rows.total > 0 && (
-          <div className="text-right">
-            <p className="text-[10px] text-muted uppercase tracking-wider">มูลค่ารวม</p>
-            <p className="text-lg font-bold text-ink tabular-nums">
-              ${formatNumber(rows.total, 2)}
+        <div className="flex flex-col items-stretch sm:items-end gap-2 shrink-0">
+          {rows.total > 0 && (
+            <div className="text-right">
+              <p className="text-[10px] text-muted uppercase tracking-wider">มูลค่ารวม</p>
+              <p className="text-lg font-bold text-ink tabular-nums">
+                ${formatNumber(rows.total, 2)}
+              </p>
+            </div>
+          )}
+          {isTestnet && (
+          <button
+            type="button"
+            onClick={handleSync}
+            disabled={syncing}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-semibold border border-line bg-base hover:border-mint/40 hover:text-mint transition-colors disabled:opacity-50"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {syncing ? "กำลังซิงก์…" : binanceLinked ? "ซิงก์จาก Binance" : "เชื่อม Binance ก่อน"}
+          </button>
+          )}
+          {isTestnet && binanceLinked && binanceMasked && (
+            <p className="text-[10px] text-muted text-right">
+              Testnet · {binanceMasked}
             </p>
-          </div>
-        )}
+          )}
+          {isDemo && (
+            <button
+              type="button"
+              onClick={onLinkBinance}
+              className="text-[11px] text-muted hover:text-ink border border-line px-3 py-2 rounded-lg transition-colors"
+            >
+              เปิด Testnet เพื่อซิงก์
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col gap-3">
@@ -170,50 +203,24 @@ export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) 
               onChange={(e) => setSymbol(e.target.value.toUpperCase())}
               onKeyDown={(e) => e.key === "Enter" && handleAdd()}
               placeholder="เหรียญ (BTC)"
-              className="w-full sm:w-28 bg-base border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted outline-none focus:border-mint/40 uppercase"
+              className="w-full sm:w-24 bg-base border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted outline-none focus:border-mint/40 uppercase"
             />
             <input
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-              placeholder={
-                inputMode === "amount"
-                  ? `จำนวน (${MODE_PLACEHOLDERS.amount})`
-                  : inputMode === "usd"
-                    ? `มูลค่า ($${MODE_PLACEHOLDERS.usd})`
-                    : `สัดส่วน (${MODE_PLACEHOLDERS.pct}%)`
-              }
+              placeholder="จำนวน (0.5)"
               inputMode="decimal"
               className="flex-1 min-w-0 bg-base border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted outline-none focus:border-mint/40 tabular-nums"
             />
-            <div className="flex rounded-lg border border-line overflow-hidden shrink-0">
-              {(Object.keys(MODE_LABELS) as InputMode[]).map((mode) => {
-                const disabled = mode === "pct" && pctModeDisabled;
-                const active = inputMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => handleModeChange(mode)}
-                    className={`px-2.5 py-2 text-[11px] font-medium transition-colors ${
-                      active
-                        ? "bg-mint/15 text-mint"
-                        : disabled
-                          ? "bg-base text-muted/40 cursor-not-allowed"
-                          : "bg-base text-muted hover:text-ink"
-                    }`}
-                    title={
-                      disabled
-                        ? "ใช้ % ได้เมื่อมีเหรียญอื่นในพอร์ตแล้ว"
-                        : undefined
-                    }
-                  >
-                    {MODE_LABELS[mode]}
-                  </button>
-                );
-              })}
-            </div>
+            <input
+              value={avgPrice}
+              onChange={(e) => setAvgPrice(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+              placeholder="ราคาเฉลี่ย ($)"
+              inputMode="decimal"
+              className="flex-1 min-w-0 bg-base border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted outline-none focus:border-mint/40 tabular-nums"
+            />
             <button
               onClick={handleAdd}
               disabled={busy}
@@ -235,7 +242,9 @@ export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) 
             <div className="text-left min-w-0">
               <p className="text-sm text-ink font-medium">ยังไม่มีเหรียญในพอร์ต</p>
               <p className="text-xs text-muted mt-0.5">
-                เพิ่มเหรียญด้านบน — ใส่ได้ทั้งจำนวนเหรียญ มูลค่า USD หรือ % ของพอร์ต
+                {isDemo
+                  ? "เพิ่มเหรียญด้านบน — โหมด Demo กรอกเอง ไม่ซิงก์ Binance"
+                  : "เพิ่มด้านบน หรือซิงก์จาก Binance Testnet"}
               </p>
             </div>
           </div>
@@ -245,11 +254,16 @@ export default function HoldingsPanel({ holdings, liveCoins, onChange }: Props) 
               <li key={r.symbol} className="py-2.5 px-3 flex items-center gap-3 bg-base/30">
                 <CoinIcon asset={r.symbol} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-ink">{r.symbol}</span>
                     <span className="text-[11px] text-muted tabular-nums">
                       {r.amount} หน่วย
                     </span>
+                    {r.avg_price != null && r.avg_price > 0 && (
+                      <span className="text-[10px] text-muted tabular-nums">
+                        เฉลี่ย ${formatNumber(r.avg_price, r.avg_price >= 1 ? 2 : 4)}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-1 flex items-center gap-2">
                     <span className="h-1.5 w-20 bg-line rounded-full overflow-hidden">

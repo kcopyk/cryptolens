@@ -77,7 +77,10 @@ def _body_line(symbol: str, dev: dict, weight: float) -> str | None:
     mult = f"{abs(z):.1f}" if z is not None else "?"
     ret = dev.get("today_return_pct")
     ret_s = f"{ret:+.1f}%" if ret is not None else "—"
-    return f"{symbol} — {label} ~{mult}× สวิงปกติ ({ret_s}) · {weight:.0f}% ของพอร์ต"
+    extra = ""
+    if status == "abnormal" and dev.get("direction") == "down":
+        extra = " · ไม่ใช่คำแนะนำให้ขาย"
+    return f"{symbol} — {label} ~{mult}× สวิงปกติ ({ret_s}) · {weight:.0f}% ของพอร์ต{extra}"
 
 
 def snapshot_to_scenario(snap: DaySnapshot, kind: str) -> dict:
